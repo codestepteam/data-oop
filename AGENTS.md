@@ -43,11 +43,14 @@ QueryDefinition  kind=entity
 - `entity`: Falkor에 실제 노드/인스턴스를 만들 수 있는 클래스다.
 - `logical_entity`: 외부 시스템에 이미 존재하고 Falkor에는 인스턴스를 만들지 않는 클래스다.
 - `Product`, `ProductVariant`는 ezAdmin 등에 이미 존재하는 데이터를 논리적으로 연결하는 용도다.
+- `Product`는 채널별 상품이며 `Product -[:LISTED_ON]-> SalesChannel`로 채널에 묶인다.
+- `Product -[:HAS_VARIANT]-> ProductVariant` 구조로 채널별 상품 하위에 variant가 존재한다.
+- `ProductVariant.ezadmin_sku`는 variant별 통합 ezAdmin SKU 프로퍼티다.
 - `SalesChannel`은 logical entity가 아니다. 채널별 실제 노드를 만들 수 있는 entity다.
+- `SalesChannel`에는 `status`를 두지 않는다.
 - `Inventory`도 logical entity가 아니다. 재고 레코드/노드를 만들 수 있는 entity다.
+- `Inventory`는 `Inventory -[:FOR_VARIANT]-> ProductVariant`로만 연결한다. `Inventory -[:FOR_CHANNEL]-> SalesChannel`은 사용하지 않는다.
 - 모든 node의 기본 식별자는 `uuid`다. 도메인/외부 시스템 식별자는 별도 프로퍼티로 둔다.
-- `ProductVariant.ezadmin_sku`는 통합 SKU 프로퍼티다.
-- 채널별 SKU는 `ProductVariant -[:LISTED_ON]-> SalesChannel` 관계의 `channel_sku` 프로퍼티로 둔다.
 - 기간별 매출 같은 데이터는 `QueryDefinition -[:READS_FROM]-> Table`로 조회 방법을 정의한다.
 - 실제 credential은 TBox에 직접 저장하지 않고 `connection_ref` 같은 참조만 둔다.
 
