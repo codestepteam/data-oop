@@ -32,7 +32,7 @@ class FakeGraph:
                 ["Product", "logical_entity"],
                 ["SalesChannel", "entity"],
             ])
-        if "MATCH (n:Product) RETURN n.id, ID(n)" in compact:
+        if "MATCH (n:Product) RETURN n.uuid, ID(n)" in compact:
             return FakeResult([])
         if "MATCH (n:SalesChannel) RETURN count(n)" in compact:
             return FakeResult([[1]])
@@ -42,8 +42,10 @@ class FakeGraph:
             return FakeResult([])
         if "IMPLEMENTS" in compact and "HAS_PROPERTY" in compact:
             return FakeResult([])
+        if "WHERE n.uuid IS NULL" in compact:
+            return FakeResult([])
         if "WHERE n.channel_code IS NULL" in compact:
-            return FakeResult([["channel_1", 7]])
+            return FakeResult([["uuid_channel_1", 7]])
         if "WHERE n.channel_code IS NOT NULL" in compact:
             return FakeResult([])
         if "MATCH (r:RelationshipDef)-[f:FROM_CLASS]->" in compact:
@@ -63,7 +65,7 @@ def test_store_latest_validation_report_deletes_old_runs_and_writes_new_run_and_
                 target_id="SalesChannel",
                 metadata={
                     "className": "SalesChannel",
-                    "instanceId": "channel_1",
+                    "instanceUuid": "uuid_channel_1",
                     "propertyName": "channel_code",
                 },
             ),
@@ -105,5 +107,5 @@ def test_run_latest_falkor_abox_validation_detects_required_property_and_stores_
     assert issue_params is not None
     assert issue_params["code"] == "missing_required_property"
     assert issue_params["class_name"] == "SalesChannel"
-    assert issue_params["instance_id"] == "channel_1"
+    assert issue_params["instance_uuid"] == "uuid_channel_1"
     assert issue_params["property_name"] == "channel_code"

@@ -11,6 +11,9 @@ def test_commerce_preset_builds_valid_tbox() -> None:
 def test_commerce_preset_contains_minimal_virtual_semantic_layer_schema() -> None:
     repo = build_commerce_tbox()
 
+    assert repo.get_interface("Identifiable") is None
+    assert repo.get_property("id") is None
+
     class_names = {class_def.name for class_def in repo.list_classes()}
     assert class_names == {
         "Product",

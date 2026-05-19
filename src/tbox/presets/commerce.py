@@ -29,7 +29,6 @@ def build_commerce_tbox(repo: TBoxRepository | None = None) -> TBoxRepository:
 
 
 def _define_interfaces(repo: TBoxRepository) -> None:
-    repo.create_interface("Identifiable", description="Has a stable identifier")
     repo.create_interface("NamedResource", description="Has a human-readable name")
     repo.create_interface("StatusTracked", description="Has lifecycle/status information")
     repo.create_interface("TimeScoped", description="Has a time boundary or update time")
@@ -37,7 +36,6 @@ def _define_interfaces(repo: TBoxRepository) -> None:
 
 def _define_properties(repo: TBoxRepository) -> None:
     properties: dict[str, tuple[str, str, dict[str, Any] | None]] = {
-        "id": ("string", "Stable identifier", None),
         "name": ("string", "Human-readable name", None),
         "status": ("string", "Lifecycle status", None),
         "product_code": ("string", "Product code in source systems", None),
@@ -97,17 +95,6 @@ def _define_classes(repo: TBoxRepository) -> None:
 
 
 def _implement_interfaces(repo: TBoxRepository) -> None:
-    for class_name in (
-        "Product",
-        "ProductVariant",
-        "Inventory",
-        "SalesChannel",
-        "DataSource",
-        "Table",
-        "QueryDefinition",
-    ):
-        repo.implement_interface(class_name=class_name, interface_name="Identifiable")
-
     for class_name in ("Product", "ProductVariant", "SalesChannel", "DataSource", "QueryDefinition"):
         repo.implement_interface(class_name=class_name, interface_name="NamedResource")
 
@@ -119,7 +106,6 @@ def _implement_interfaces(repo: TBoxRepository) -> None:
 
 
 def _attach_properties(repo: TBoxRepository) -> None:
-    _attach_interface(repo, "Identifiable", "id", required=True, unique=True, nullable=False)
     _attach_interface(repo, "NamedResource", "name", required=True, nullable=False)
     _attach_interface(repo, "StatusTracked", "status", required=True, nullable=False)
     _attach_interface(repo, "TimeScoped", "updated_at", required=True, nullable=False)

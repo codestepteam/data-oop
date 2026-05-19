@@ -49,6 +49,9 @@ class _RelationshipInfo:
 # Validation history is intentionally not versioned.
 # Every run deletes previous ValidationRun/ValidationIssue nodes and leaves only
 # the latest result so the graph always shows current problems against current TBox.
+# TBox definitions are grouped with the :TBox label. ABox nodes are not grouped
+# with a common :ABox label; they are identified by their domain class label and
+# must carry a uuid property.
 def run_latest_falkor_abox_validation(
     *,
     graph: FalkorGraph,
@@ -58,6 +61,7 @@ def run_latest_falkor_abox_validation(
 
     Assumptions:
     - ABox node labels match ClassDef.name.
+    - ABox nodes must have a uuid property.
     - ClassDef.kind="entity" means local instances may exist and are validated.
     - ClassDef.kind="logical_entity" means instances live outside FalkorDB; local
       nodes with that label are reported as validation errors.
@@ -77,11 +81,11 @@ def run_latest_falkor_abox_validation(
         if class_info.kind == "logical_entity":
             rows = _query_rows(
                 graph,
-                f"MATCH (n:{label}) RETURN n.id, ID(n) LIMIT 1000",
+                f"MATCH (n:{label}) RETURN n.uuid, ID(n) LIMIT 1000",
             )
             checked_instance_count += len(rows)
             for row in rows:
-                instance_id = _instance_id(row)
+                instance_uuid = _instance_uuid(row)
                 issues.append(
                     _issue(
                         code="logical_entity.local_instance_present",
@@ -91,7 +95,7 @@ def run_latest_falkor_abox_validation(
                             "should not exist in FalkorDB"
                         ),
                         class_name=class_info.name,
-                        instance_id=instance_id,
+                        instance_uuid=instance_uuid,
                     )
                 )
             continue
@@ -108,6 +112,21 @@ def run_latest_falkor_abox_validation(
             continue
 
         checked_instance_count += _count_instances(graph, label)
+        for row in _query_rows(
+            graph,
+            f"MATCH (n:{label}) WHERE n.uuid IS NULL RETURN ID(n) LIMIT 1000",
+        ):
+            issues.append(
+                _issue(
+                    code="missing_node_uuid",
+                    severity="error",
+                    message=f"{class_info.name} node must have uuid",
+                    class_name=class_info.name,
+                    instance_uuid=f"internal:{row[0]}",
+                    property_name="uuid",
+                )
+            )
+
         property_bindings = _load_effective_property_bindings(graph, class_info.name)
         for binding in property_bindings:
             prop = _safe_identifier(binding.name, "property")
@@ -117,12 +136,12 @@ def run_latest_falkor_abox_validation(
                     f"""
                     MATCH (n:{label})
                     WHERE n.{prop} IS NULL
-                    RETURN n.id, ID(n)
+                    RETURN n.uuid, ID(n)
                     LIMIT 1000
                     """,
                 )
                 for row in rows:
-                    instance_id = _instance_id(row)
+                    instance_uuid = _instance_uuid(row)
                     issues.append(
                         _issue(
                             code="missing_required_property",
@@ -132,7 +151,7 @@ def run_latest_falkor_abox_validation(
                                 "but missing"
                             ),
                             class_name=class_info.name,
-                            instance_id=instance_id,
+                            instance_uuid=instance_uuid,
                             property_name=binding.name,
                         )
                     )
@@ -177,13 +196,13 @@ def run_latest_falkor_abox_validation(
                     OPTIONAL MATCH (n)-[r:{rel_type}]->(m:{to_label})
                     WITH n, count(m) AS cnt
                     WHERE cnt < $min_count
-                    RETURN n.id, ID(n), cnt
+                    RETURN n.uuid, ID(n), cnt
                     LIMIT 1000
                     """,
                     {"min_count": min_count},
                 )
                 for row in rows:
-                    instance_id = _instance_id(row)
+                    instance_uuid = _instance_uuid(row)
                     issues.append(
                         _issue(
                             code="relationship_min_count_violation",
@@ -194,7 +213,7 @@ def run_latest_falkor_abox_validation(
                                 f"{relationship.to_class}"
                             ),
                             class_name=class_info.name,
-                            instance_id=instance_id,
+                            instance_uuid=instance_uuid,
                             relationship_name=relationship.name,
                             metadata={"count": row[2], "min_count": min_count},
                         )
@@ -207,13 +226,13 @@ def run_latest_falkor_abox_validation(
                     OPTIONAL MATCH (n)-[r:{rel_type}]->(m:{to_label})
                     WITH n, count(m) AS cnt
                     WHERE cnt > $max_count
-                    RETURN n.id, ID(n), cnt
+                    RETURN n.uuid, ID(n), cnt
                     LIMIT 1000
                     """,
                     {"max_count": relationship.max_count},
                 )
                 for row in rows:
-                    instance_id = _instance_id(row)
+                    instance_uuid = _instance_uuid(row)
                     issues.append(
                         _issue(
                             code="relationship_max_count_violation",
@@ -224,7 +243,7 @@ def run_latest_falkor_abox_validation(
                                 f"relationship(s) to {relationship.to_class}"
                             ),
                             class_name=class_info.name,
-                            instance_id=instance_id,
+                            instance_uuid=instance_uuid,
                             relationship_name=relationship.name,
                             metadata={
                                 "count": row[2],
@@ -278,6 +297,7 @@ def store_latest_validation_report(
     graph.query(
         """
         CREATE (:ValidationRun {
+            uuid: $uuid,
             id: $id,
             status: $status,
             startedAt: $started_at,
@@ -288,6 +308,7 @@ def store_latest_validation_report(
         })
         """,
         {
+            "uuid": str(uuid4()),
             "id": final_run_id,
             "status": status,
             "started_at": now,
@@ -332,18 +353,19 @@ def _create_validation_issue(
 ) -> None:
     issue_id = f"{run_id}_issue_{index}"
     class_name = issue.metadata.get("className")
-    instance_id = issue.metadata.get("instanceId")
+    instance_uuid = issue.metadata.get("instanceUuid")
     property_name = issue.metadata.get("propertyName")
     relationship_name = issue.metadata.get("relationshipName")
     graph.query(
         """
         MATCH (run:ValidationRun {id: $run_id})
         CREATE (issue:ValidationIssue {
+            uuid: $uuid,
             id: $id,
             code: $code,
             severity: $severity,
             className: $class_name,
-            instanceId: $instance_id,
+            instanceUuid: $instance_uuid,
             propertyName: $property_name,
             relationshipName: $relationship_name,
             message: $message,
@@ -354,12 +376,13 @@ def _create_validation_issue(
         CREATE (run)-[:HAS_ISSUE]->(issue)
         """,
         {
+            "uuid": str(uuid4()),
             "run_id": run_id,
             "id": issue_id,
             "code": issue.code,
             "severity": issue.severity,
             "class_name": class_name,
-            "instance_id": instance_id,
+            "instance_uuid": instance_uuid,
             "property_name": property_name,
             "relationship_name": relationship_name,
             "message": issue.message,
@@ -368,14 +391,14 @@ def _create_validation_issue(
             "created_at": _now(),
         },
     )
-    if class_name and instance_id and NAME_RE.match(str(class_name)):
+    if class_name and instance_uuid and NAME_RE.match(str(class_name)):
         graph.query(
             f"""
             MATCH (issue:ValidationIssue {{id: $issue_id}})
-            MATCH (node:{class_name} {{id: $instance_id}})
+            MATCH (node:{class_name} {{uuid: $instance_uuid}})
             MERGE (issue)-[:AFFECTS]->(node)
             """,
-            {"issue_id": issue_id, "instance_id": instance_id},
+            {"issue_id": issue_id, "instance_uuid": instance_uuid},
         )
 
 
@@ -470,7 +493,7 @@ def _safe_identifier(value: str, kind: str) -> str:
     return value
 
 
-def _instance_id(row: list[Any]) -> str:
+def _instance_uuid(row: list[Any]) -> str:
     if row and row[0] is not None:
         return str(row[0])
     if len(row) > 1:
@@ -484,7 +507,7 @@ def _issue(
     severity: str,
     message: str,
     class_name: str | None = None,
-    instance_id: str | None = None,
+    instance_uuid: str | None = None,
     property_name: str | None = None,
     relationship_name: str | None = None,
     metadata: dict[str, Any] | None = None,
@@ -492,8 +515,8 @@ def _issue(
     issue_metadata = dict(metadata or {})
     if class_name is not None:
         issue_metadata["className"] = class_name
-    if instance_id is not None:
-        issue_metadata["instanceId"] = instance_id
+    if instance_uuid is not None:
+        issue_metadata["instanceUuid"] = instance_uuid
     if property_name is not None:
         issue_metadata["propertyName"] = property_name
     if relationship_name is not None:

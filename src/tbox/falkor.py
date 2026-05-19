@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any, Protocol
+from uuid import NAMESPACE_URL, uuid5
 
 from .models import ConstraintDef, EffectivePropertyDef, PropertyBinding
 from .repository import TBoxRepository
@@ -99,14 +100,16 @@ def load_tbox_to_falkor(
     for class_def in classes:
         graph.query(
             """
-            MERGE (n:ClassDef {name: $name})
-            SET n.kind = $kind,
+            MERGE (n:TBox:ClassDef {name: $name})
+            SET n.uuid = $uuid,
+                n.kind = $kind,
                 n.label = $label,
                 n.description = $description,
                 n.metadata = $metadata
             """,
             {
                 "name": class_def.name,
+                "uuid": _stable_uuid("ClassDef", class_def.name),
                 "kind": class_def.kind,
                 "label": class_def.label,
                 "description": class_def.description,
@@ -117,12 +120,14 @@ def load_tbox_to_falkor(
     for interface_def in interfaces:
         graph.query(
             """
-            MERGE (n:InterfaceDef {name: $name})
-            SET n.description = $description,
+            MERGE (n:TBox:InterfaceDef {name: $name})
+            SET n.uuid = $uuid,
+                n.description = $description,
                 n.metadata = $metadata
             """,
             {
                 "name": interface_def.name,
+                "uuid": _stable_uuid("InterfaceDef", interface_def.name),
                 "description": interface_def.description,
                 "metadata": _json(interface_def.metadata),
             },
@@ -131,13 +136,15 @@ def load_tbox_to_falkor(
     for property_def in properties:
         graph.query(
             """
-            MERGE (n:PropertyDef {name: $name})
-            SET n.datatype = $datatype,
+            MERGE (n:TBox:PropertyDef {name: $name})
+            SET n.uuid = $uuid,
+                n.datatype = $datatype,
                 n.description = $description,
                 n.metadata = $metadata
             """,
             {
                 "name": property_def.name,
+                "uuid": _stable_uuid("PropertyDef", property_def.name),
                 "datatype": property_def.datatype,
                 "description": property_def.description,
                 "metadata": _json(property_def.metadata),
@@ -181,13 +188,15 @@ def load_tbox_to_falkor(
     for relationship_def in relationships:
         graph.query(
             """
-            MERGE (r:RelationshipDef {id: $id})
-            SET r.name = $name,
+            MERGE (r:TBox:RelationshipDef {id: $id})
+            SET r.uuid = $uuid,
+                r.name = $name,
                 r.description = $description,
                 r.metadata = $metadata
             """,
             {
                 "id": relationship_def.id,
+                "uuid": _stable_uuid("RelationshipDef", relationship_def.id),
                 "name": relationship_def.name,
                 "description": relationship_def.description,
                 "metadata": _json(relationship_def.metadata),
@@ -231,8 +240,9 @@ def load_tbox_to_falkor(
     for constraint in constraints:
         graph.query(
             """
-            MERGE (c:ConstraintDef {id: $id})
-            SET c.kind = $kind,
+            MERGE (c:TBox:ConstraintDef {id: $id})
+            SET c.uuid = $uuid,
+                c.kind = $kind,
                 c.targetKind = $target_kind,
                 c.targetId = $target_id,
                 c.propertyNames = $property_names,
@@ -243,6 +253,7 @@ def load_tbox_to_falkor(
             """,
             {
                 "id": constraint.id,
+                "uuid": _stable_uuid("ConstraintDef", constraint.id),
                 "kind": constraint.kind,
                 "target_kind": constraint.target_kind,
                 "target_id": constraint.target_id,
@@ -332,6 +343,10 @@ def _binding_params(binding: PropertyBinding) -> dict[str, object]:
         "description": binding.description,
         "metadata": _json(binding.metadata),
     }
+
+
+def _stable_uuid(kind: str, key: str) -> str:
+    return str(uuid5(NAMESPACE_URL, f"tbox:{kind}:{key}"))
 
 
 def _json(value: Any) -> str:

@@ -34,11 +34,12 @@ def test_load_tbox_to_falkor_emits_planned_graph_shape() -> None:
     assert result.graph_name == "commerce_tbox"
     assert result.classes == 7
     assert result.relationships == 6
-    assert result.nodes == 56
+    assert result.nodes == 54
     assert result.edges > 0
+    assert "n.uuid = $uuid" in all_queries
     assert "n.kind = $kind" in all_queries
-    assert ":ClassDef" in all_queries
-    assert ":RelationshipDef" in all_queries
+    assert ":TBox:ClassDef" in all_queries
+    assert ":TBox:RelationshipDef" in all_queries
     assert "FROM_CLASS" in all_queries
     assert "TO_CLASS" in all_queries
     assert "HAS_PROPERTY" in all_queries

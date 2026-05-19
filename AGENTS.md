@@ -6,6 +6,10 @@
 - `scripts/load_commerce_tbox.py --clear`는 live graph를 프리셋 기준으로 초기화하므로 사용자 승인 없이 실행하지 않는다.
 - ABox validation은 버전/revision 없이 최신 TBox 기준으로만 실행한다.
 - validation 실행 시 기존 `ValidationRun`/`ValidationIssue`는 모두 삭제하고 최신 결과만 남긴다.
+- TBox 정의 노드는 공통 label `TBox`로 묶는다. 예: `(:TBox:ClassDef)`, `(:TBox:PropertyDef)`.
+- ABox 인스턴스는 공통 `ABox` label로 묶지 않는다. 도메인 class label만 사용한다. 예: `(:SalesChannel)`.
+- 모든 실제 graph node는 기본 식별자로 `uuid` property를 가져야 한다.
+- `Identifiable` interface와 `id` PropertyDef는 사용하지 않는다.
 
 ## FalkorDB 접속
 
@@ -34,12 +38,14 @@ QueryDefinition  kind=entity
 
 ## 모델링 원칙
 
+- TBox/ABox 구분은 ABox를 묶는 방식이 아니라 TBox를 `:TBox` label로 묶는 방식으로 한다.
 - `ClassDef.kind`는 `entity`와 `logical_entity` 두 값만 사용한다.
 - `entity`: Falkor에 실제 노드/인스턴스를 만들 수 있는 클래스다.
 - `logical_entity`: 외부 시스템에 이미 존재하고 Falkor에는 인스턴스를 만들지 않는 클래스다.
 - `Product`, `ProductVariant`는 ezAdmin 등에 이미 존재하는 데이터를 논리적으로 연결하는 용도다.
 - `SalesChannel`은 logical entity가 아니다. 채널별 실제 노드를 만들 수 있는 entity다.
 - `Inventory`도 logical entity가 아니다. 재고 레코드/노드를 만들 수 있는 entity다.
+- 모든 node의 기본 식별자는 `uuid`다. 도메인/외부 시스템 식별자는 별도 프로퍼티로 둔다.
 - `ProductVariant.ezadmin_sku`는 통합 SKU 프로퍼티다.
 - 채널별 SKU는 `ProductVariant -[:LISTED_ON]-> SalesChannel` 관계의 `channel_sku` 프로퍼티로 둔다.
 - 기간별 매출 같은 데이터는 `QueryDefinition -[:READS_FROM]-> Table`로 조회 방법을 정의한다.
@@ -55,13 +61,14 @@ uv run python scripts/run_validation.py --host localhost --port 6380 --graph com
 
 ```text
 (:ValidationRun)-[:HAS_ISSUE]->(:ValidationIssue)
-(:ValidationIssue)-[:AFFECTS]->(ABoxInstance)  # instance id가 있을 때만 연결
+(:ValidationIssue)-[:AFFECTS]->(ABoxInstance)  # instance uuid가 있을 때만 연결
 ```
 
 검증 기준:
 
 - `entity` ClassDef: 동일 label의 ABox 노드를 검사한다.
 - `logical_entity` ClassDef: Falkor에 동일 label의 ABox 노드가 있으면 error다.
+- entity ABox node는 `uuid`가 없으면 error다.
 - required/unique property를 검사한다.
 - relationship cardinality는 from/to 양쪽이 모두 `entity`일 때만 local edge로 검사한다.
 - logical entity와의 관계는 외부 key/query resolution 대상으로 보고 local edge cardinality를 강제하지 않는다.
