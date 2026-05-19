@@ -1,0 +1,25 @@
+[project]
+name = "tbox-ontology"
+version = "0.1.0"
+description = "Minimal TBox/ABox ontology helper for FalkorDB"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "falkordb>=1.0.10",
+  "redis>=7.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tbox"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
