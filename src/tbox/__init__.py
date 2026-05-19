@@ -27,7 +27,6 @@ from .models import (
     ValidationIssue,
     ValidationReport,
 )
-from .presets import build_commerce_tbox
 from .repository import TBoxRepository
 from .validator import ALLOWED_CLASS_KINDS, SUPPORTED_DATATYPES, TBoxValidator
 
@@ -41,7 +40,6 @@ __all__ = [
     "FalkorLoadResult",
     "FalkorValidationResult",
     "InMemoryTBoxRepository",
-    "build_commerce_tbox",
     "InterfaceDef",
     "PropertyBinding",
     "PropertyDef",
