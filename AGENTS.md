@@ -3,7 +3,12 @@
 - `README.md`는 유지하지 않는다.
 - 라이브 TBox는 FalkorDB graph `commerce_tbox`에 있다.
 - 커머스 TBox preset 파일은 유지하지 않는다.
-- 커머스 TBox 변경은 사용자가 요청한 경우 FalkorDB `commerce_tbox` live graph를 직접 갱신한다.
+- 커머스 TBox 변경은 사용자가 요청한 경우 FalkorDB `commerce_tbox` live graph를 갱신한다.
+- 단, live graph 변경은 raw Cypher를 바로 쓰기보다 이 프로젝트의 Python 라이브러리 함수를 통해 수행하는 것을 기본 원칙으로 한다.
+- 필요한 라이브러리 함수가 없으면 먼저 `src/tbox`에 함수를 추가/고도화하고, 그 함수를 사용해서 변경한다.
+- 반복되는 작업 흐름은 스크립트에 임시로 두지 말고 라이브러리 함수로 추출한다.
+- 라이브러리 함수에는 테스트를 추가하고, 실제 FalkorDB 변경 전/후 검증 가능한 형태로 만든다.
+- 이 프로젝트의 목적은 라이브 TBox를 운영하면서 동시에 TBox 라이브러리를 계속 고도화하는 것이다.
 - ABox validation은 버전/revision 없이 최신 TBox 기준으로만 실행한다.
 - validation 실행 시 기존 `ValidationRun`/`ValidationIssue`는 모두 삭제하고 최신 결과만 남긴다.
 - TBox 정의 노드는 공통 label `TBox`로 묶는다. 예: `(:TBox:ClassDef)`, `(:TBox:PropertyDef)`.
