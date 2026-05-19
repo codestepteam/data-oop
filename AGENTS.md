@@ -1,0 +1,44 @@
+# Project Agent Notes
+
+- `README.md`는 유지하지 않는다.
+- 라이브 TBox는 FalkorDB graph `commerce_tbox`에 있다.
+- 커머스 TBox의 작은 변경은 매번 `src/tbox/presets/commerce.py`를 수정하지 말고, 사용자가 요청한 경우 FalkorDB 데이터를 직접 갱신한다.
+- `scripts/load_commerce_tbox.py --clear`는 live graph를 프리셋 기준으로 초기화하므로 사용자 승인 없이 실행하지 않는다.
+
+## FalkorDB 접속
+
+```text
+Browser URL: http://macmini:3009
+Browser 내부 DB Host: localhost
+Browser 내부 DB Port: 6379
+Python/loader Host: localhost 또는 macmini
+Python/loader Port: 6380
+Graph: commerce_tbox
+Username: default 또는 공백
+Password: 공백
+```
+
+## 현재 커머스 ClassDef
+
+```text
+Product          kind=logical_entity
+ProductVariant   kind=logical_entity
+Inventory        kind=entity
+SalesChannel     kind=entity
+DataSource       kind=entity
+Table            kind=entity
+QueryDefinition  kind=entity
+```
+
+## 모델링 원칙
+
+- `ClassDef.kind`는 `entity`와 `logical_entity` 두 값만 사용한다.
+- `entity`: Falkor에 실제 노드/인스턴스를 만들 수 있는 클래스다.
+- `logical_entity`: 외부 시스템에 이미 존재하고 Falkor에는 인스턴스를 만들지 않는 클래스다.
+- `Product`, `ProductVariant`는 ezAdmin 등에 이미 존재하는 데이터를 논리적으로 연결하는 용도다.
+- `SalesChannel`은 logical entity가 아니다. 채널별 실제 노드를 만들 수 있는 entity다.
+- `Inventory`도 logical entity가 아니다. 재고 레코드/노드를 만들 수 있는 entity다.
+- `ProductVariant.ezadmin_sku`는 통합 SKU 프로퍼티다.
+- 채널별 SKU는 `ProductVariant -[:LISTED_ON]-> SalesChannel` 관계의 `channel_sku` 프로퍼티로 둔다.
+- 기간별 매출 같은 데이터는 `QueryDefinition -[:READS_FROM]-> Table`로 조회 방법을 정의한다.
+- 실제 credential은 TBox에 직접 저장하지 않고 `connection_ref` 같은 참조만 둔다.

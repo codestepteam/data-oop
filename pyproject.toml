@@ -1,8 +1,8 @@
 [project]
 name = "tbox-ontology"
 version = "0.1.0"
-description = "Minimal TBox/ABox ontology helper for FalkorDB"
-readme = "README.md"
+description = "Dynamic TBox ontology definition and validation library"
+readme = "AGENTS.md"
 requires-python = ">=3.11"
 dependencies = [
   "falkordb>=1.0.10",
