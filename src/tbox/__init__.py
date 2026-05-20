@@ -6,6 +6,13 @@ from .exceptions import (
     TBoxValidationError,
 )
 from .falkor import FalkorLoadResult, connect_and_load_tbox_to_falkor, load_tbox_to_falkor
+from .falkor_abox import (
+    ABoxNodeResult,
+    ABoxRelationshipResult,
+    connect_and_upsert_abox_node,
+    upsert_abox_node,
+    upsert_abox_relationship,
+)
 from .falkor_validation import (
     FalkorValidationResult,
     connect_and_run_latest_falkor_abox_validation,
@@ -35,6 +42,8 @@ __all__ = [
     "EffectiveClassSchema",
     "EffectivePropertyDef",
     "EffectiveRelationshipSchema",
+    "ABoxNodeResult",
+    "ABoxRelationshipResult",
     "FalkorLoadResult",
     "FalkorValidationResult",
     "InMemoryTBoxRepository",
@@ -53,8 +62,11 @@ __all__ = [
     "ValidationIssue",
     "ValidationReport",
     "connect_and_load_tbox_to_falkor",
+    "connect_and_upsert_abox_node",
     "connect_and_run_latest_falkor_abox_validation",
     "load_tbox_to_falkor",
     "run_latest_falkor_abox_validation",
     "store_latest_validation_report",
+    "upsert_abox_node",
+    "upsert_abox_relationship",
 ]
