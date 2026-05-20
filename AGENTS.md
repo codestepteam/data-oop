@@ -1,6 +1,7 @@
 # Project Agent Notes
 
 - `README.md`는 유지하지 않는다.
+- 사용자의 지시가 기존 프로젝트 원칙, 모델링 규칙, 데이터 안전성, 라이브 graph 변경/삭제, 보안/credential 처리 측면에서 문제가 될 수 있거나 의도가 불명확하면, 작업을 진행하기 전에 예상 문제를 짚고 사용자에게 다시 확인한다.
 - 라이브 TBox는 FalkorDB graph `commerce_tbox`에 있다.
 - 커머스 TBox preset 파일은 유지하지 않는다.
 - 커머스 TBox 변경은 사용자가 요청한 경우 FalkorDB `commerce_tbox` live graph를 갱신한다.
@@ -32,21 +33,19 @@ Password: 공백
 ## 현재 커머스 ClassDef
 
 ```text
-Product          kind=logical_entity
-ProductVariant   kind=logical_entity
-Inventory        kind=entity
-SalesChannel     kind=entity
-DataSource       kind=entity
-Table            kind=entity
-QueryDefinition  kind=entity
+Product
+ProductVariant
+Inventory
+SalesChannel
+DataSource
+Table
+QueryDefinition
 ```
 
 ## 모델링 원칙
 
 - TBox/ABox 구분은 ABox를 묶는 방식이 아니라 TBox를 `:TBox` label로 묶는 방식으로 한다.
-- `ClassDef.kind`는 `entity`와 `logical_entity` 두 값만 사용한다.
-- `entity`: Falkor에 실제 노드/인스턴스를 만들 수 있는 클래스다.
-- `logical_entity`: 외부 시스템에 이미 존재하고 Falkor에는 인스턴스를 만들지 않는 클래스다.
+- 모든 클래스는 인스턴스화가 가능하며, 필요한 경우 FalkorDB 내에 ABox 노드로 생성한다.
 - `Product`, `ProductVariant`는 ezAdmin 등에 이미 존재하는 데이터를 논리적으로 연결하는 용도다.
 - `Product`는 채널별 상품이며 `Product -[:LISTED_ON]-> SalesChannel`로 채널에 묶인다.
 - `Product -[:HAS_VARIANT]-> ProductVariant` 구조로 채널별 상품 하위에 variant가 존재한다.
@@ -74,9 +73,7 @@ uv run python scripts/run_validation.py --host localhost --port 6380 --graph com
 
 검증 기준:
 
-- `entity` ClassDef: 동일 label의 ABox 노드를 검사한다.
-- `logical_entity` ClassDef: Falkor에 동일 label의 ABox 노드가 있으면 error다.
-- entity ABox node는 `uuid`가 없으면 error다.
+- 모든 ClassDef: 동일 label의 ABox 노드를 검사한다.
+- ABox node는 `uuid`가 없으면 error다.
 - required/unique property를 검사한다.
-- relationship cardinality는 from/to 양쪽이 모두 `entity`일 때만 local edge로 검사한다.
-- logical entity와의 관계는 외부 key/query resolution 대상으로 보고 local edge cardinality를 강제하지 않는다.
+- relationship cardinality는 local edge로 검사한다.

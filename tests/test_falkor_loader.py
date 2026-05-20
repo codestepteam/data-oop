@@ -25,7 +25,7 @@ class FakeGraph:
 
 def build_sample_tbox() -> InMemoryTBoxRepository:
     repo = InMemoryTBoxRepository()
-    repo.create_class("SalesChannel", kind="entity")
+    repo.create_class("SalesChannel")
     repo.create_property("name", datatype="string")
     repo.attach_property_to_class(
         class_name="SalesChannel",
@@ -57,7 +57,6 @@ def test_load_tbox_to_falkor_emits_planned_graph_shape() -> None:
     assert result.nodes == 3
     assert result.edges > 0
     assert "n.uuid = $uuid" in all_queries
-    assert "n.kind = $kind" in all_queries
     assert ":TBox:ClassDef" in all_queries
     assert "HAS_PROPERTY" in all_queries
     assert "CONSTRAINS" in all_queries

@@ -27,10 +27,9 @@ class FakeGraph:
     ) -> FakeResult:
         self.calls.append((q, params))
         compact = " ".join(q.split())
-        if "MATCH (c:ClassDef) RETURN c.name, c.kind" in compact:
+        if "MATCH (c:ClassDef) RETURN c.name" in compact:
             return FakeResult([
-                ["Product", "logical_entity"],
-                ["SalesChannel", "entity"],
+                ["SalesChannel"],
             ])
         if "MATCH (n:Product) RETURN n.uuid, ID(n)" in compact:
             return FakeResult([])

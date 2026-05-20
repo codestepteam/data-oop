@@ -23,7 +23,6 @@ class FalkorValidationResult:
 @dataclass(frozen=True)
 class _ClassInfo:
     name: str
-    kind: str
 
 
 @dataclass(frozen=True)
@@ -40,7 +39,6 @@ class _RelationshipInfo:
     name: str
     from_class: str
     to_class: str
-    to_kind: str
     min_count: int
     max_count: int | None
     required: bool
@@ -62,54 +60,16 @@ def run_latest_falkor_abox_validation(
     Assumptions:
     - ABox node labels match ClassDef.name.
     - ABox nodes must have a uuid property.
-    - ClassDef.kind="entity" means local instances may exist and are validated.
-    - ClassDef.kind="logical_entity" means instances live outside FalkorDB; local
-      nodes with that label are reported as validation errors.
-    - Relationship cardinality is checked only when both endpoint classes are
-      entity classes. Relationships to logical entities are semantic links and
-      are resolved by external keys/queries rather than local edges.
+    - All ClassDef nodes define concrete ABox labels which are validated.
     """
 
     issues: list[ValidationIssue] = []
     checked_instance_count = 0
 
     classes = _load_classes(graph)
-    class_by_name = {class_info.name: class_info for class_info in classes}
 
     for class_info in classes:
         label = _safe_identifier(class_info.name, "class")
-        if class_info.kind == "logical_entity":
-            rows = _query_rows(
-                graph,
-                f"MATCH (n:{label}) RETURN n.uuid, ID(n) LIMIT 1000",
-            )
-            checked_instance_count += len(rows)
-            for row in rows:
-                instance_uuid = _instance_uuid(row)
-                issues.append(
-                    _issue(
-                        code="logical_entity.local_instance_present",
-                        severity="error",
-                        message=(
-                            f"{class_info.name} is logical_entity; local ABox node "
-                            "should not exist in FalkorDB"
-                        ),
-                        class_name=class_info.name,
-                        instance_uuid=instance_uuid,
-                    )
-                )
-            continue
-
-        if class_info.kind != "entity":
-            issues.append(
-                _issue(
-                    code="class.invalid_kind",
-                    severity="error",
-                    message=f"Invalid ClassDef.kind: {class_info.kind}",
-                    class_name=class_info.name,
-                )
-            )
-            continue
 
         checked_instance_count += _count_instances(graph, label)
         for row in _query_rows(
@@ -183,8 +143,6 @@ def run_latest_falkor_abox_validation(
                     )
 
         for relationship in _load_outgoing_relationships(graph, class_info.name):
-            if class_by_name.get(relationship.to_class, _ClassInfo("", "")).kind != "entity":
-                continue
             rel_type = _safe_identifier(relationship.name, "relationship")
             to_label = _safe_identifier(relationship.to_class, "class")
             min_count = max(relationship.min_count, 1 if relationship.required else 0)
@@ -405,9 +363,9 @@ def _create_validation_issue(
 def _load_classes(graph: FalkorGraph) -> list[_ClassInfo]:
     rows = _query_rows(
         graph,
-        "MATCH (c:ClassDef) RETURN c.name, c.kind ORDER BY c.name",
+        "MATCH (c:ClassDef) RETURN c.name ORDER BY c.name",
     )
-    return [_ClassInfo(name=row[0], kind=row[1] or "entity") for row in rows]
+    return [_ClassInfo(name=row[0]) for row in rows]
 
 
 def _load_effective_property_bindings(
@@ -454,7 +412,7 @@ def _load_outgoing_relationships(
         """
         MATCH (r:RelationshipDef)-[f:FROM_CLASS]->(from:ClassDef {name: $class_name})
         MATCH (r)-[:TO_CLASS]->(to:ClassDef)
-        RETURN r.id, r.name, from.name, to.name, to.kind, f.minCount, f.maxCount, f.required
+        RETURN r.id, r.name, from.name, to.name, f.minCount, f.maxCount, f.required
         """,
         {"class_name": class_name},
     )
@@ -464,10 +422,9 @@ def _load_outgoing_relationships(
             name=row[1],
             from_class=row[2],
             to_class=row[3],
-            to_kind=row[4] or "entity",
-            min_count=int(row[5] or 0),
-            max_count=None if row[6] is None else int(row[6]),
-            required=bool(row[7]),
+            min_count=int(row[4] or 0),
+            max_count=None if row[5] is None else int(row[5]),
+            required=bool(row[6]),
         )
         for row in rows
     ]

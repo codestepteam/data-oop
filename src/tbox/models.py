@@ -4,10 +4,6 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 OwnerKind = Literal["class", "interface", "relationship"]
-# ClassDef.kind deliberately has only two values:
-# - entity: this class may have concrete ABox nodes in FalkorDB.
-# - logical_entity: instances live in external systems and are resolved by keys/queries.
-ClassKind = Literal["entity", "logical_entity"]
 TargetKind = Literal["class", "interface", "property", "relationship"]
 Severity = Literal["info", "warning", "error"]
 ValidationTargetKind = Literal[
@@ -18,7 +14,6 @@ ValidationTargetKind = Literal[
 @dataclass(frozen=True)
 class ClassDef:
     name: str
-    kind: ClassKind = "entity"
     label: str | None = None
     description: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

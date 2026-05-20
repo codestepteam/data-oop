@@ -19,7 +19,6 @@ from .models import (
 from .repository import TBoxRepository
 
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
-ALLOWED_CLASS_KINDS = {"entity", "logical_entity"}
 
 SUPPORTED_DATATYPES = {
     "unknown",
@@ -56,7 +55,6 @@ class TBoxValidator:
 
         for class_def in self.repo.list_classes():
             issues.extend(self._validate_name("class", class_def.name, class_def.name))
-            issues.extend(self._validate_class_kind(class_def))
             issues.extend(self._validate_class_property_conflicts(class_def.name))
             issues.extend(self._validate_property_bindings(
                 self.repo.get_properties_of_class(class_def.name, include_interfaces=False)
@@ -110,7 +108,6 @@ class TBoxValidator:
             )
 
         issues.extend(self._validate_name("class", class_def.name, class_def.name))
-        issues.extend(self._validate_class_kind(class_def))
         issues.extend(self._validate_class_property_conflicts(class_name))
         issues.extend(
             self._validate_property_bindings(
@@ -263,20 +260,6 @@ class TBoxValidator:
                 target_kind,
                 target_id,
                 {"name": name, "pattern": NAME_RE.pattern},
-            )
-        ]
-
-    def _validate_class_kind(self, class_def: ClassDef) -> list[ValidationIssue]:
-        if class_def.kind in ALLOWED_CLASS_KINDS:
-            return []
-        return [
-            self._issue(
-                "class.invalid_kind",
-                "error",
-                f"Invalid ClassDef.kind: {class_def.kind}",
-                "class",
-                class_def.name,
-                {"kind": class_def.kind, "allowed": sorted(ALLOWED_CLASS_KINDS)},
             )
         ]
 

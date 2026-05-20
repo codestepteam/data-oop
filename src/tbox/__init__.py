@@ -15,7 +15,6 @@ from .falkor_validation import (
 from .memory import InMemoryTBoxRepository
 from .models import (
     ClassDef,
-    ClassKind,
     ConstraintDef,
     EffectiveClassSchema,
     EffectivePropertyDef,
@@ -28,11 +27,10 @@ from .models import (
     ValidationReport,
 )
 from .repository import TBoxRepository
-from .validator import ALLOWED_CLASS_KINDS, SUPPORTED_DATATYPES, TBoxValidator
+from .validator import SUPPORTED_DATATYPES, TBoxValidator
 
 __all__ = [
     "ClassDef",
-    "ClassKind",
     "ConstraintDef",
     "EffectiveClassSchema",
     "EffectivePropertyDef",
@@ -44,7 +42,6 @@ __all__ = [
     "PropertyBinding",
     "PropertyDef",
     "RelationshipDef",
-    "ALLOWED_CLASS_KINDS",
     "SUPPORTED_DATATYPES",
     "TBoxAlreadyExistsError",
     "TBoxConflictError",

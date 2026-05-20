@@ -134,13 +134,3 @@ def test_name_pattern_is_validated() -> None:
 
     assert not report.valid
     assert any(issue.code == "class.invalid_name" for issue in report.errors())
-
-
-def test_class_kind_is_validated() -> None:
-    repo = InMemoryTBoxRepository()
-    repo.create_class("Table", kind="data_table")  # type: ignore[arg-type]
-
-    report = TBoxValidator(repo).validate_class("Table")
-
-    assert not report.valid
-    assert any(issue.code == "class.invalid_kind" for issue in report.errors())

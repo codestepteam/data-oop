@@ -4,7 +4,6 @@ from typing import Any, Literal, Protocol
 
 from .models import (
     ClassDef,
-    ClassKind,
     ConstraintDef,
     EffectivePropertyDef,
     InterfaceDef,
@@ -20,7 +19,6 @@ class TBoxRepository(Protocol):
         self,
         name: str,
         *,
-        kind: ClassKind = "entity",
         label: str | None = None,
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -33,7 +31,6 @@ class TBoxRepository(Protocol):
         self,
         name: str,
         *,
-        kind: ClassKind | None = None,
         label: str | None = None,
         description: str | None = None,
         metadata: dict[str, Any] | None = None,

@@ -5,7 +5,6 @@ from typing import Any, Literal
 from .exceptions import TBoxAlreadyExistsError, TBoxConflictError, TBoxNotFoundError
 from .models import (
     ClassDef,
-    ClassKind,
     ConstraintDef,
     EffectivePropertyDef,
     InterfaceDef,
@@ -144,7 +143,6 @@ class InMemoryTBoxRepository:
         self,
         name: str,
         *,
-        kind: ClassKind = "entity",
         label: str | None = None,
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -156,7 +154,6 @@ class InMemoryTBoxRepository:
             existing = self._classes[name]
             updated = ClassDef(
                 name=name,
-                kind=kind if kind != "entity" or existing.kind == "entity" else existing.kind,
                 label=label if label is not None else existing.label,
                 description=(
                     description if description is not None else existing.description
@@ -168,7 +165,6 @@ class InMemoryTBoxRepository:
 
         class_def = ClassDef(
             name=name,
-            kind=kind,
             label=label,
             description=description,
             metadata=dict(metadata or {}),
@@ -183,7 +179,6 @@ class InMemoryTBoxRepository:
         self,
         name: str,
         *,
-        kind: ClassKind | None = None,
         label: str | None = None,
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -191,7 +186,6 @@ class InMemoryTBoxRepository:
         existing = self._require_class(name)
         updated = ClassDef(
             name=name,
-            kind=kind if kind is not None else existing.kind,
             label=label if label is not None else existing.label,
             description=description if description is not None else existing.description,
             metadata=self._merge_metadata(existing.metadata, metadata),

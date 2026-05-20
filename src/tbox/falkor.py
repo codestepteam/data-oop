@@ -102,7 +102,6 @@ def load_tbox_to_falkor(
             """
             MERGE (n:TBox:ClassDef {name: $name})
             SET n.uuid = $uuid,
-                n.kind = $kind,
                 n.label = $label,
                 n.description = $description,
                 n.metadata = $metadata
@@ -110,7 +109,6 @@ def load_tbox_to_falkor(
             {
                 "name": class_def.name,
                 "uuid": _stable_uuid("ClassDef", class_def.name),
-                "kind": class_def.kind,
                 "label": class_def.label,
                 "description": class_def.description,
                 "metadata": _json(class_def.metadata),

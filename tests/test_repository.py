@@ -3,14 +3,14 @@ import pytest
 from tbox import InMemoryTBoxRepository, TBoxConflictError
 
 
-def test_class_kind_is_class_metadata_not_a_property() -> None:
+def test_class_metadata_updates() -> None:
     repo = InMemoryTBoxRepository()
 
-    class_def = repo.create_class("Product", kind="logical_entity")
-    updated = repo.update_class("Product", kind="entity")
+    class_def = repo.create_class("Product", metadata={"foo": "bar"})
+    updated = repo.update_class("Product", metadata={"baz": "qux"})
 
-    assert class_def.kind == "logical_entity"
-    assert updated.kind == "entity"
+    assert class_def.metadata == {"foo": "bar"}
+    assert updated.metadata == {"foo": "bar", "baz": "qux"}
 
 
 def test_property_constraints_are_stored_on_bindings_not_property_def() -> None:
