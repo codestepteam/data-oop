@@ -180,3 +180,39 @@ def _safe_identifier(value: str, kind: str) -> str:
     if not NAME_RE.match(value):
         raise ValueError(f"Unsafe {kind} identifier: {value}")
     return value
+
+
+def clear_abox_nodes(*, graph: FalkorGraph) -> int:
+    """Delete all ABox nodes (nodes that are not :TBox, :ValidationRun, or :ValidationIssue) from FalkorDB.
+    
+    Returns the number of deleted nodes.
+    """
+    # Count first to return how many we are deleting
+    res = graph.query(
+        "MATCH (n) WHERE NOT n:TBox AND NOT n:ValidationRun AND NOT n:ValidationIssue RETURN count(n)"
+    ).result_set
+    count = int(res[0][0]) if res and res[0] else 0
+
+    if count > 0:
+        # DETACH DELETE removes the nodes and their relationships
+        graph.query(
+            "MATCH (n) WHERE NOT n:TBox AND NOT n:ValidationRun AND NOT n:ValidationIssue DETACH DELETE n"
+        )
+    
+    return count
+
+
+def connect_and_clear_abox_nodes(
+    *,
+    graph_name: str = "commerce_tbox",
+    host: str = "localhost",
+    port: int = 6380,
+    username: str | None = None,
+    password: str | None = None,
+) -> int:
+    """Connect to FalkorDB and delete all ABox nodes."""
+    from falkordb import FalkorDB
+
+    db = FalkorDB(host=host, port=port, username=username, password=password)
+    graph = db.select_graph(graph_name)
+    return clear_abox_nodes(graph=graph)

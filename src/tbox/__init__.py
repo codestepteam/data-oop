@@ -12,12 +12,22 @@ from .falkor_abox import (
     connect_and_upsert_abox_node,
     upsert_abox_node,
     upsert_abox_relationship,
+    clear_abox_nodes,
+    connect_and_clear_abox_nodes,
 )
 from .falkor_validation import (
     FalkorValidationResult,
     connect_and_run_latest_falkor_abox_validation,
     run_latest_falkor_abox_validation,
     store_latest_validation_report,
+)
+from .dsl import (
+    ClassBuilder,
+    Property,
+    RelationshipSpec,
+    TBoxBuilder,
+    load_tbox_from_specs,
+    tbox_class,
 )
 from .memory import InMemoryTBoxRepository
 from .models import (
@@ -61,6 +71,12 @@ __all__ = [
     "TBoxValidator",
     "ValidationIssue",
     "ValidationReport",
+    "TBoxBuilder",
+    "ClassBuilder",
+    "Property",
+    "tbox_class",
+    "RelationshipSpec",
+    "load_tbox_from_specs",
     "connect_and_load_tbox_to_falkor",
     "connect_and_upsert_abox_node",
     "connect_and_run_latest_falkor_abox_validation",
@@ -69,4 +85,6 @@ __all__ = [
     "store_latest_validation_report",
     "upsert_abox_node",
     "upsert_abox_relationship",
+    "clear_abox_nodes",
+    "connect_and_clear_abox_nodes",
 ]

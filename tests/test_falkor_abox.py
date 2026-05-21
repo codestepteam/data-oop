@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from tbox import upsert_abox_node, upsert_abox_relationship
+from tbox import upsert_abox_node, upsert_abox_relationship, clear_abox_nodes
 
 
 class FakeResult:
@@ -28,6 +28,8 @@ class FakeGraph:
             return FakeResult([[1]])
         if "MATCH (r:TBox:RelationshipDef" in compact:
             return FakeResult([[1]])
+        if "RETURN count(n)" in compact:
+            return FakeResult([[3]])
         return FakeResult([["ok"]])
 
 
@@ -87,3 +89,22 @@ def test_upsert_abox_relationship_checks_tbox_relationship_and_uses_uuid() -> No
     assert params is not None
     assert params["from_uuid"] == "product-1"
     assert params["to_uuid"] == "channel-naver-smartstore"
+
+
+def test_clear_abox_nodes_deletes_non_tbox_nodes() -> None:
+    graph = FakeGraph()
+
+    deleted_count = clear_abox_nodes(graph=graph)
+
+    assert deleted_count == 3
+    assert len(graph.calls) == 2
+    
+    # First call: count non-TBox nodes
+    count_query = graph.calls[0][0]
+    assert "RETURN count(n)" in count_query
+    assert "NOT n:TBox" in count_query
+    
+    # Second call: delete non-TBox nodes
+    delete_query = graph.calls[1][0]
+    assert "DETACH DELETE n" in delete_query
+    assert "NOT n:TBox" in delete_query
