@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any, Protocol
-from uuid import NAMESPACE_URL, uuid5
 
-from .models import ConstraintDef, EffectivePropertyDef, PropertyBinding
 from .repository import TBoxRepository
 
 
@@ -223,7 +220,4 @@ def load_tbox_to_falkor(
         relationship_endpoint_edges=relationship_endpoint_edges,
         constraint_edges=constraint_edges,
     )
-
-
-# Removed unused helper functions since load_tbox_to_falkor delegates to FalkorTBoxRepository.
 
