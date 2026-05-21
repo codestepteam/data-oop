@@ -79,7 +79,7 @@ def load_tbox_to_falkor(
     graph_name: str = "tbox",
     clear: bool = False,
 ) -> FalkorLoadResult:
-    """Load TBox definitions into FalkorDB using the planned graph shape.
+    """Load TBox definitions into FalkorDB using FalkorTBoxRepository.
 
     This writes TBox metadata only. It does not create ABox instances.
     """
@@ -91,6 +91,10 @@ def load_tbox_to_falkor(
             if "empty key" not in str(exc).lower() and "not found" not in str(exc).lower():
                 raise
 
+    from .falkor_repository import FalkorTBoxRepository
+
+    falkor_repo = FalkorTBoxRepository(graph)
+
     classes = repo.list_classes()
     interfaces = repo.list_interfaces()
     properties = repo.list_properties()
@@ -98,171 +102,113 @@ def load_tbox_to_falkor(
     constraints = repo.list_constraints()
 
     for class_def in classes:
-        graph.query(
-            """
-            MERGE (n:TBox:ClassDef {name: $name})
-            SET n.uuid = $uuid,
-                n.label = $label,
-                n.description = $description,
-                n.metadata = $metadata
-            """,
-            {
-                "name": class_def.name,
-                "uuid": _stable_uuid("ClassDef", class_def.name),
-                "label": class_def.label,
-                "description": class_def.description,
-                "metadata": _json(class_def.metadata),
-            },
+        falkor_repo.create_class(
+            class_def.name,
+            label=class_def.label,
+            description=class_def.description,
+            metadata=class_def.metadata,
+            merge=True,
         )
 
     for interface_def in interfaces:
-        graph.query(
-            """
-            MERGE (n:TBox:InterfaceDef {name: $name})
-            SET n.uuid = $uuid,
-                n.description = $description,
-                n.metadata = $metadata
-            """,
-            {
-                "name": interface_def.name,
-                "uuid": _stable_uuid("InterfaceDef", interface_def.name),
-                "description": interface_def.description,
-                "metadata": _json(interface_def.metadata),
-            },
+        falkor_repo.create_interface(
+            interface_def.name,
+            description=interface_def.description,
+            metadata=interface_def.metadata,
+            merge=True,
         )
 
     for property_def in properties:
-        graph.query(
-            """
-            MERGE (n:TBox:PropertyDef {name: $name})
-            SET n.uuid = $uuid,
-                n.datatype = $datatype,
-                n.description = $description,
-                n.metadata = $metadata
-            """,
-            {
-                "name": property_def.name,
-                "uuid": _stable_uuid("PropertyDef", property_def.name),
-                "datatype": property_def.datatype,
-                "description": property_def.description,
-                "metadata": _json(property_def.metadata),
-            },
+        falkor_repo.create_property(
+            property_def.name,
+            datatype=property_def.datatype,
+            description=property_def.description,
+            metadata=property_def.metadata,
+            merge=True,
         )
 
     implements_edges = 0
     for class_def in classes:
         for interface_def in repo.get_interfaces_of_class(class_def.name):
-            graph.query(
-                """
-                MATCH (c:ClassDef {name: $class_name})
-                MATCH (i:InterfaceDef {name: $interface_name})
-                MERGE (c)-[:IMPLEMENTS]->(i)
-                """,
-                {"class_name": class_def.name, "interface_name": interface_def.name},
+            falkor_repo.implement_interface(
+                class_name=class_def.name, interface_name=interface_def.name
             )
             implements_edges += 1
 
     property_edges = 0
     for class_def in classes:
-        property_edges += _load_property_edges(
-            graph,
-            owner_label="ClassDef",
-            owner_key="name",
-            owner_id=class_def.name,
-            properties=repo.get_properties_of_class(
-                class_def.name, include_interfaces=False
-            ),
-        )
+        for effective in repo.get_properties_of_class(
+            class_def.name, include_interfaces=False
+        ):
+            binding = effective.binding
+            falkor_repo.attach_property_to_class(
+                class_name=class_def.name,
+                property_name=effective.property.name,
+                required=binding.required,
+                unique=binding.unique,
+                nullable=binding.nullable,
+                default=binding.default,
+                metadata=binding.metadata,
+            )
+            property_edges += 1
+
     for interface_def in interfaces:
-        property_edges += _load_property_edges(
-            graph,
-            owner_label="InterfaceDef",
-            owner_key="name",
-            owner_id=interface_def.name,
-            properties=repo.get_properties_of_interface(interface_def.name),
-        )
+        for effective in repo.get_properties_of_interface(interface_def.name):
+            binding = effective.binding
+            falkor_repo.attach_property_to_interface(
+                interface_name=interface_def.name,
+                property_name=effective.property.name,
+                required=binding.required,
+                unique=binding.unique,
+                nullable=binding.nullable,
+                default=binding.default,
+                metadata=binding.metadata,
+            )
+            property_edges += 1
 
     relationship_endpoint_edges = 0
     for relationship_def in relationships:
-        graph.query(
-            """
-            MERGE (r:TBox:RelationshipDef {id: $id})
-            SET r.uuid = $uuid,
-                r.name = $name,
-                r.description = $description,
-                r.metadata = $metadata
-            """,
-            {
-                "id": relationship_def.id,
-                "uuid": _stable_uuid("RelationshipDef", relationship_def.id),
-                "name": relationship_def.name,
-                "description": relationship_def.description,
-                "metadata": _json(relationship_def.metadata),
-            },
-        )
-        graph.query(
-            """
-            MATCH (r:RelationshipDef {id: $id})
-            MATCH (c:ClassDef {name: $from_class})
-            MERGE (r)-[edge:FROM_CLASS]->(c)
-            SET edge.minCount = $min_count,
-                edge.maxCount = $max_count,
-                edge.required = $required
-            """,
-            {
-                "id": relationship_def.id,
-                "from_class": relationship_def.from_class,
-                "min_count": relationship_def.min_count,
-                "max_count": relationship_def.max_count,
-                "required": relationship_def.required,
-            },
-        )
-        graph.query(
-            """
-            MATCH (r:RelationshipDef {id: $id})
-            MATCH (c:ClassDef {name: $to_class})
-            MERGE (r)-[:TO_CLASS]->(c)
-            """,
-            {"id": relationship_def.id, "to_class": relationship_def.to_class},
+        falkor_repo.define_relationship(
+            id=relationship_def.id,
+            name=relationship_def.name,
+            from_class=relationship_def.from_class,
+            to_class=relationship_def.to_class,
+            min_count=relationship_def.min_count,
+            max_count=relationship_def.max_count,
+            required=relationship_def.required,
+            description=relationship_def.description,
+            metadata=relationship_def.metadata,
+            merge=True,
         )
         relationship_endpoint_edges += 2
-        property_edges += _load_property_edges(
-            graph,
-            owner_label="RelationshipDef",
-            owner_key="id",
-            owner_id=relationship_def.id,
-            properties=repo.get_properties_of_relationship(relationship_def.id),
-        )
+
+        for effective in repo.get_properties_of_relationship(relationship_def.id):
+            binding = effective.binding
+            falkor_repo.attach_property_to_relationship(
+                relationship_id=relationship_def.id,
+                property_name=effective.property.name,
+                required=binding.required,
+                unique=binding.unique,
+                nullable=binding.nullable,
+                default=binding.default,
+                metadata=binding.metadata,
+            )
+            property_edges += 1
 
     constraint_edges = 0
     for constraint in constraints:
-        graph.query(
-            """
-            MERGE (c:TBox:ConstraintDef {id: $id})
-            SET c.uuid = $uuid,
-                c.kind = $kind,
-                c.targetKind = $target_kind,
-                c.targetId = $target_id,
-                c.propertyNames = $property_names,
-                c.expression = $expression,
-                c.severity = $severity,
-                c.description = $description,
-                c.metadata = $metadata
-            """,
-            {
-                "id": constraint.id,
-                "uuid": _stable_uuid("ConstraintDef", constraint.id),
-                "kind": constraint.kind,
-                "target_kind": constraint.target_kind,
-                "target_id": constraint.target_id,
-                "property_names": list(constraint.property_names),
-                "expression": constraint.expression,
-                "severity": constraint.severity,
-                "description": constraint.description,
-                "metadata": _json(constraint.metadata),
-            },
+        falkor_repo.create_constraint(
+            id=constraint.id,
+            kind=constraint.kind,
+            target_kind=constraint.target_kind,
+            target_id=constraint.target_id,
+            property_names=constraint.property_names,
+            expression=constraint.expression,
+            severity=constraint.severity,
+            description=constraint.description,
+            metadata=constraint.metadata,
+            merge=True,
         )
-        _load_constraint_edge(graph, constraint)
         constraint_edges += 1
 
     return FalkorLoadResult(
@@ -279,73 +225,5 @@ def load_tbox_to_falkor(
     )
 
 
-def _load_property_edges(
-    graph: FalkorGraph,
-    *,
-    owner_label: str,
-    owner_key: str,
-    owner_id: str,
-    properties: list[EffectivePropertyDef],
-) -> int:
-    query = f"""
-        MATCH (owner:{owner_label} {{{owner_key}: $owner_id}})
-        MATCH (property:PropertyDef {{name: $property_name}})
-        MERGE (owner)-[edge:HAS_PROPERTY]->(property)
-        SET edge.required = $required,
-            edge.unique = $unique,
-            edge.nullable = $nullable,
-            edge.defaultValue = $default_value,
-            edge.defaultJson = $default_json,
-            edge.description = $description,
-            edge.metadata = $metadata
-    """
-    count = 0
-    for effective in properties:
-        binding = effective.binding
-        graph.query(
-            query,
-            {
-                "owner_id": owner_id,
-                "property_name": effective.property.name,
-                **_binding_params(binding),
-            },
-        )
-        count += 1
-    return count
+# Removed unused helper functions since load_tbox_to_falkor delegates to FalkorTBoxRepository.
 
-
-def _load_constraint_edge(graph: FalkorGraph, constraint: ConstraintDef) -> None:
-    target_label, target_key = {
-        "class": ("ClassDef", "name"),
-        "interface": ("InterfaceDef", "name"),
-        "property": ("PropertyDef", "name"),
-        "relationship": ("RelationshipDef", "id"),
-    }[constraint.target_kind]
-    graph.query(
-        f"""
-        MATCH (constraint:ConstraintDef {{id: $constraint_id}})
-        MATCH (target:{target_label} {{{target_key}: $target_id}})
-        MERGE (constraint)-[:CONSTRAINS]->(target)
-        """,
-        {"constraint_id": constraint.id, "target_id": constraint.target_id},
-    )
-
-
-def _binding_params(binding: PropertyBinding) -> dict[str, object]:
-    return {
-        "required": binding.required,
-        "unique": binding.unique,
-        "nullable": binding.nullable,
-        "default_value": binding.default,
-        "default_json": _json(binding.default),
-        "description": binding.description,
-        "metadata": _json(binding.metadata),
-    }
-
-
-def _stable_uuid(kind: str, key: str) -> str:
-    return str(uuid5(NAMESPACE_URL, f"tbox:{kind}:{key}"))
-
-
-def _json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)

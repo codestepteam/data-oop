@@ -6,6 +6,7 @@ from .exceptions import (
     TBoxValidationError,
 )
 from .falkor import FalkorLoadResult, connect_and_load_tbox_to_falkor, load_tbox_to_falkor
+from .falkor_repository import FalkorTBoxRepository
 from .falkor_abox import (
     ABoxNodeResult,
     ABoxRelationshipResult,
@@ -67,6 +68,7 @@ __all__ = [
     "TBoxError",
     "TBoxNotFoundError",
     "TBoxRepository",
+    "FalkorTBoxRepository",
     "TBoxValidationError",
     "TBoxValidator",
     "ValidationIssue",
