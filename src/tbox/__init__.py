@@ -22,6 +22,7 @@ from .falkor_validation import (
     run_latest_falkor_abox_validation,
     store_latest_validation_report,
 )
+from .workflows import save_workflow, run_workflow
 from .dsl import (
     ClassBuilder,
     Property,
@@ -89,4 +90,6 @@ __all__ = [
     "upsert_abox_relationship",
     "clear_abox_nodes",
     "connect_and_clear_abox_nodes",
+    "save_workflow",
+    "run_workflow",
 ]
