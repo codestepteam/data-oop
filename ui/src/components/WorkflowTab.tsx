@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   FolderOpen,
   Plus,
@@ -102,6 +102,14 @@ export function WorkflowTab({
   // Local state for toggling DSL / JSON code preview
   const [showCodePreview, setShowCodePreview] = useState(false);
 
+  // Local state for storing custom node positions when dragged
+  const [customPositions, setCustomPositions] = useState<Record<string, { x: number; y: number }>>({});
+
+  // Reset custom node positions when switching selected workflow
+  useEffect(() => {
+    setCustomPositions({});
+  }, [selectedWorkflow?.name]);
+
   // Helper to extract step dependencies from step properties / bindings
   const getStepDependencies = (step: WorkflowStep): string[] => {
     const deps: string[] = [];
@@ -118,38 +126,50 @@ export function WorkflowTab({
   };
 
   // Calculate dynamic layout coordinates for DAG-like tree flow
-  const positions: Record<string, { x: number; y: number }> = {};
+  const computedPositions: Record<string, { x: number; y: number }> = {};
   let colCount = 0;
+
+  const isOverlap = (x: number, y: number): boolean => {
+    return Object.values(computedPositions).some(pos => 
+      Math.abs(pos.x - x) < 180 && Math.abs(pos.y - y) < 80
+    );
+  };
 
   editorSteps.forEach((step) => {
     const deps = getStepDependencies(step);
     const validDeps = deps.filter(depId => editorSteps.some(s => s.step_id === depId));
 
+    let calcX = 50;
+    let calcY = 50;
+
     if (step.action === "create_relationship" && validDeps.length >= 1) {
       let avgX = 0;
       let maxY = 0;
       validDeps.forEach(depId => {
-        const depPos = positions[depId] || { x: 50, y: 50 };
+        const depPos = computedPositions[depId] || { x: 50, y: 50 };
         avgX += depPos.x;
         maxY = Math.max(maxY, depPos.y);
       });
-      positions[step.step_id] = {
-        x: avgX / validDeps.length,
-        y: maxY + 150
-      };
+      calcX = avgX / validDeps.length;
+      calcY = maxY + 150;
     } else {
-      positions[step.step_id] = {
-        x: colCount * 280 + 50,
-        y: 50
-      };
+      calcX = colCount * 280 + 50;
+      calcY = 50;
       colCount++;
     }
+
+    // Shift horizontally if there is an overlap
+    while (isOverlap(calcX, calcY)) {
+      calcX += 280;
+    }
+
+    computedPositions[step.step_id] = { x: calcX, y: calcY };
   });
 
   // Derive nodes and edges dynamically for React Flow
   const flowNodes = editorSteps.map((step, idx) => {
     const isSelected = activeStepIdx === idx;
-    const pos = positions[step.step_id] || { x: idx * 260 + 50, y: 50 };
+    const pos = customPositions[step.step_id] || computedPositions[step.step_id] || { x: idx * 260 + 50, y: 50 };
     let subtitle = "";
     let bg = "bg-white border-slate-200 text-slate-800";
     
@@ -821,6 +841,12 @@ export function WorkflowTab({
                     if (idx !== -1) {
                       setActiveStepIdx(idx);
                     }
+                  }}
+                  onNodeDragStop={(_, node) => {
+                    setCustomPositions(prev => ({
+                      ...prev,
+                      [node.id]: node.position
+                    }));
                   }}
                   fitView
                   fitViewOptions={{ padding: 0.2 }}
