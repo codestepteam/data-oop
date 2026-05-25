@@ -29,31 +29,13 @@ Username: default 또는 공백
 Password: 공백
 ```
 
-## 현재 커머스 ClassDef
-
-```text
-Team
-Event
-Product
-Channel
-WorkflowDefinition
-```
-
-## 모델링 원칙
+## 모델링 및 라이브러리 운영 원칙
 
 - TBox/ABox 구분은 ABox를 묶는 방식이 아니라 TBox를 `:TBox` label로 묶는 방식으로 한다.
-- 모든 클래스는 인스턴스화가 가능하며, 필요한 경우 FalkorDB 내에 ABox 노드로 생성한다.
-- 모든 node의 기본 식별자는 `uuid`다. 도메인/외부 시스템 식별자는 별도 프로퍼티로 둔다.
-- `Team`은 조직 내 부서/팀을 나타내며, `name`(필수, 고유) 속성을 갖는다.
-- `Event`는 팀이 주최하는 이벤트/행사이며, 시작일(`start_date`, 필수), 종료일(`end_date`, 옵셔널), 설명(`description`, 필수) 속성을 갖는다.
-- `Product`는 팀이 관리하거나 이벤트에서 홍보하는 상품을 나타낸다.
-- `Channel`은 이벤트가 진행되는 플랫폼/채널(예: Instagram Shop 등)을 나타낸다.
-- `WorkflowDefinition`은 UI에서 빌딩된 스키마-드리븐 저코드/노코드 워크플로우 정의 스펙(`name` 필수/유니크, `steps_json` 필수)을 담는다.
-- 관계성:
-  - `Team -[:ORGANIZED]-> Event`: 팀이 특정 이벤트를 개최/기획한다.
-  - `Event -[:ON_CHANNEL]-> Channel`: 이벤트가 특정 채널을 대상으로 운영된다.
-  - `Event -[:INCLUDES]-> Product`: 이벤트에 특정 제품군들이 포함/연동된다.
-  - `Team -[:MANAGES]-> Product`: 팀이 해당 제품의 관리 책임을 맡는다.
+- TBox 정의 노드는 공통 label `TBox`로 묶는다. 예: `(:TBox:ClassDef)`, `(:TBox:PropertyDef)`.
+- ABox 인스턴스는 공통 `ABox` label로 묶지 않는다. 도메인 class label만 사용한다.
+- 모든 실제 graph node는 기본 식별자로 `uuid` property를 가져야 하며, validator는 이를 기본 제약 조건으로 검증한다.
+- `Identifiable` interface와 `id` PropertyDef는 사용하지 않는다.
 - 실제 credential은 TBox에 직접 저장하지 않고 `connection_ref` 같은 참조만 둔다.
 
 ## Validation 운영
