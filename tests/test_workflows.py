@@ -2,7 +2,7 @@ import pytest
 import uuid
 from falkordb import FalkorDB
 
-from tbox import (
+from data_oop import (
     FalkorTBoxRepository,
     connect_and_clear_abox_nodes,
     save_workflow,

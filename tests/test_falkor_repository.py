@@ -1,7 +1,7 @@
 import pytest
 from falkordb import FalkorDB
 
-from tbox import FalkorTBoxRepository, TBoxConflictError, TBoxNotFoundError, TBoxAlreadyExistsError
+from data_oop import FalkorTBoxRepository, TBoxConflictError, TBoxNotFoundError, TBoxAlreadyExistsError
 
 
 @pytest.fixture(scope="module")

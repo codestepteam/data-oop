@@ -1,5 +1,5 @@
 [project]
-name = "tbox-ontology"
+name = "data-oop"
 version = "0.1.0"
 description = "Dynamic TBox ontology definition and validation library"
 readme = "AGENTS.md"
@@ -19,7 +19,7 @@ requires = ["hatchling>=1.24.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/tbox"]
+packages = ["src/data_oop"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

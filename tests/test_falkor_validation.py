@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tbox import (
+from data_oop import (
     ValidationIssue,
     ValidationReport,
     run_latest_falkor_abox_validation,

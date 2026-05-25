@@ -59,7 +59,7 @@ def upsert_abox_node(
 
 def connect_and_upsert_abox_node(
     *,
-    graph_name: str = "commerce_tbox",
+    graph_name: str = "commerce_data_oop",
     host: str = "localhost",
     port: int = 6380,
     username: str | None = None,
@@ -204,7 +204,7 @@ def clear_abox_nodes(*, graph: FalkorGraph) -> int:
 
 def connect_and_clear_abox_nodes(
     *,
-    graph_name: str = "commerce_tbox",
+    graph_name: str = "commerce_data_oop",
     host: str = "localhost",
     port: int = 6380,
     username: str | None = None,

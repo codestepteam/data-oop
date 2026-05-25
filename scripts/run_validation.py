@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from tbox import connect_and_run_latest_falkor_abox_validation
+from data_oop import connect_and_run_latest_falkor_abox_validation
 
 
 def main() -> None:
@@ -11,7 +11,7 @@ def main() -> None:
     )
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=6380)
-    parser.add_argument("--graph", default="commerce_tbox")
+    parser.add_argument("--graph", default="commerce_data_oop")
     parser.add_argument("--username", default=None)
     parser.add_argument("--password", default=None)
     parser.add_argument("--run-id", default=None)

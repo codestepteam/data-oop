@@ -1,6 +1,6 @@
 import pytest
 
-from tbox import InMemoryTBoxRepository, TBoxConflictError
+from data_oop import InMemoryTBoxRepository, TBoxConflictError
 
 
 def test_class_metadata_updates() -> None:

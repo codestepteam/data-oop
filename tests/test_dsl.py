@@ -1,6 +1,6 @@
 import pytest
 
-from tbox import (
+from data_oop import (
     InMemoryTBoxRepository,
     Property,
     RelationshipSpec,

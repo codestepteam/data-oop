@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from tbox import upsert_abox_node, upsert_abox_relationship, clear_abox_nodes
+from data_oop import upsert_abox_node, upsert_abox_relationship, clear_abox_nodes
 
 
 class FakeResult:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tbox import InMemoryTBoxRepository, load_tbox_to_falkor
+from data_oop import InMemoryTBoxRepository, load_tbox_to_falkor
 
 
 class FakeResult:

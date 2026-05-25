@@ -1,6 +1,6 @@
 import pytest
 
-from tbox import InMemoryTBoxRepository, TBoxValidationError, TBoxValidator
+from data_oop import InMemoryTBoxRepository, TBoxValidationError, TBoxValidator
 
 
 def build_valid_repo() -> InMemoryTBoxRepository:
