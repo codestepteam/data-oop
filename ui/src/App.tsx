@@ -13,7 +13,24 @@ import { WorkflowTab } from "./components/WorkflowTab";
 import { NodeSelectorModal } from "./components/NodeSelectorModal";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"tbox" | "validation" | "workflow">("tbox");
+  const [activeTab, setActiveTab] = useState<"tbox" | "validation" | "workflow">(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab");
+    if (tab === "tbox" || tab === "validation" || tab === "workflow") {
+      return tab;
+    }
+    return "tbox";
+  });
+
+  // Sync tab with URL search parameters
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab") !== activeTab) {
+      params.set("tab", activeTab);
+      const newUrl = `${window.location.pathname}?${params.toString()}`;
+      window.history.replaceState({}, "", newUrl);
+    }
+  }, [activeTab]);
 
   // Custom Hooks
   const {

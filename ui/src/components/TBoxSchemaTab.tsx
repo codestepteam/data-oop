@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { RefreshCw, Plus, Activity, Database } from "lucide-react";
 import type { TBoxClass, TBoxInterface, TBoxRelationship } from "../types";
 
@@ -221,7 +221,7 @@ export function TBoxSchemaTab({
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Datatype</label>
                 <select
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-indigo-500 bg-white"
                   value={newPropDatatype}
                   onChange={(e) => setNewPropDatatype(e.target.value)}
                 >
@@ -229,6 +229,13 @@ export function TBoxSchemaTab({
                   <option value="integer">integer</option>
                   <option value="float">float</option>
                   <option value="boolean">boolean</option>
+                  <option value="date">date</option>
+                  <option value="datetime">datetime</option>
+                  <option value="email">email</option>
+                  <option value="url">url</option>
+                  <option value="phone">phone</option>
+                  <option value="uuid">uuid</option>
+                  <option value="json">json</option>
                 </select>
               </div>
               <div>

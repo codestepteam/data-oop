@@ -597,7 +597,13 @@ export function WorkflowTab({
                               >
                                 <option value="string">string</option>
                                 <option value="integer">integer</option>
+                                <option value="float">float</option>
                                 <option value="boolean">boolean</option>
+                                <option value="date">date</option>
+                                <option value="datetime">datetime</option>
+                                <option value="email">email</option>
+                                <option value="url">url</option>
+                                <option value="phone">phone</option>
                                 <option value="uuid">uuid</option>
                                 <option value="array">array</option>
                               </select>
@@ -724,7 +730,13 @@ export function WorkflowTab({
                 >
                   <option value="string">string</option>
                   <option value="integer">integer</option>
+                  <option value="float">float</option>
                   <option value="boolean">boolean</option>
+                  <option value="date">date</option>
+                  <option value="datetime">datetime</option>
+                  <option value="email">email</option>
+                  <option value="url">url</option>
+                  <option value="phone">phone</option>
                   <option value="uuid">uuid</option>
                   <option value="array">array</option>
                 </select>
