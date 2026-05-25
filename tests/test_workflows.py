@@ -359,3 +359,126 @@ def test_nested_workflow_execution(falkor_graph) -> None:
     ).result_set[0][0]
     assert rel_exists == 1
 
+
+def test_workflow_execution_rollback_on_failure(falkor_graph) -> None:
+    tbox_repo = FalkorTBoxRepository(falkor_graph)
+    tbox_repo.create_class("Event", label="Event", description="An event")
+    tbox_repo.create_property("name", datatype="string")
+    tbox_repo.attach_property_to_class(class_name="Event", property_name="name", required=True)
+
+    # 1. Simple rollback: creates event node, then fails on invalid class
+    steps = [
+        {
+            "step_id": "create_evt",
+            "action": "create_node",
+            "class_name": "Event",
+            "properties": {
+                "name": "Event To Rollback"
+            }
+        },
+        {
+            "step_id": "fail_step",
+            "action": "create_node",
+            "class_name": "FakeClassDoesNotExist",
+            "properties": {}
+        }
+    ]
+
+    save_workflow(
+        graph=falkor_graph,
+        name="rollback_simple_wf",
+        steps=steps,
+        description="Workflow that fails on step 2"
+    )
+
+    # Run should raise ValueError
+    with pytest.raises(ValueError) as excinfo:
+        run_workflow(
+            graph=falkor_graph,
+            name="rollback_simple_wf",
+            parameters={}
+        )
+    assert "ClassDef not found" in str(excinfo.value)
+
+    # Verify that Event node does not exist in DB
+    evt_exists = falkor_graph.query(
+        "MATCH (e:Event {name: 'Event To Rollback'}) RETURN count(e)"
+    ).result_set[0][0]
+    assert evt_exists == 0
+
+
+def test_nested_workflow_rollback_on_failure(falkor_graph) -> None:
+    tbox_repo = FalkorTBoxRepository(falkor_graph)
+    tbox_repo.create_class("Product", label="Product", description="A product")
+    tbox_repo.create_class("Event", label="Event", description="An event")
+    tbox_repo.create_property("name", datatype="string")
+    tbox_repo.attach_property_to_class(class_name="Product", property_name="name", required=True)
+    tbox_repo.attach_property_to_class(class_name="Event", property_name="name", required=True)
+
+    # 1. Sub-workflow (succeeds)
+    sub_steps = [
+        {
+            "step_id": "create_prod",
+            "action": "create_node",
+            "class_name": "Product",
+            "properties": {
+                "name": "Product To Rollback"
+            }
+        }
+    ]
+    save_workflow(
+        graph=falkor_graph,
+        name="sub_wf_succeed",
+        steps=sub_steps,
+        description="Sub-workflow that succeeds"
+    )
+
+    # 2. Parent workflow (creates event, runs sub-workflow, then fails)
+    parent_steps = [
+        {
+            "step_id": "create_evt",
+            "action": "create_node",
+            "class_name": "Event",
+            "properties": {
+                "name": "Event To Rollback 2"
+            }
+        },
+        {
+            "step_id": "call_sub",
+            "action": "run_workflow",
+            "workflow_name": "sub_wf_succeed",
+            "parameters": {}
+        },
+        {
+            "step_id": "fail_step",
+            "action": "create_node",
+            "class_name": "FakeClassDoesNotExist",
+            "properties": {}
+        }
+    ]
+    save_workflow(
+        graph=falkor_graph,
+        name="parent_wf_fail",
+        steps=parent_steps,
+        description="Parent workflow that fails after running sub-workflow"
+    )
+
+    # Run parent
+    with pytest.raises(ValueError):
+        run_workflow(
+            graph=falkor_graph,
+            name="parent_wf_fail",
+            parameters={}
+        )
+
+    # Both Event and Product nodes should be rolled back!
+    evt_exists = falkor_graph.query(
+        "MATCH (e:Event {name: 'Event To Rollback 2'}) RETURN count(e)"
+    ).result_set[0][0]
+    assert evt_exists == 0
+
+    prod_exists = falkor_graph.query(
+        "MATCH (p:Product {name: 'Product To Rollback'}) RETURN count(p)"
+    ).result_set[0][0]
+    assert prod_exists == 0
+

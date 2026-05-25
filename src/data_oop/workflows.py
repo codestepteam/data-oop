@@ -75,110 +75,143 @@ def run_workflow(
                 pass
         context[k] = v
 
-    # 3. Execute steps sequentially
-    for step in steps:
-        step_id = step.get("step_id")
-        action = step.get("action")
-        if not step_id or not action:
-            raise ValueError(f"Invalid step configuration: {step}")
+    rollback_stack = []
 
-        # 3.1. Condition Check (if_present)
-        if_present_var = step.get("if_present")
-        if if_present_var:
-            val = _resolve_path(if_present_var, context)
-            if val is None or val == "" or val == []:
-                # Skip this step since the optional variable is missing or empty
-                continue
+    try:
+        # 3. Execute steps sequentially
+        for step in steps:
+            step_id = step.get("step_id")
+            action = step.get("action")
+            if not step_id or not action:
+                raise ValueError(f"Invalid step configuration: {step}")
 
-        # Helper to execute a single step action with a given interpolated state
-        def _exec_single_action(interpolated: dict[str, Any]) -> Any:
-            if action == "create_node":
-                class_name = interpolated.get("class_name")
-                properties = interpolated.get("properties", {})
-                node_uuid = interpolated.get("uuid") or str(uuid.uuid4())
+            # 3.1. Condition Check (if_present)
+            if_present_var = step.get("if_present")
+            if if_present_var:
+                val = _resolve_path(if_present_var, context)
+                if val is None or val == "" or val == []:
+                    # Skip this step since the optional variable is missing or empty
+                    continue
+
+            # Helper to execute a single step action with a given interpolated state
+            def _exec_single_action(interpolated: dict[str, Any]) -> Any:
+                if action == "create_node":
+                    class_name = interpolated.get("class_name")
+                    properties = interpolated.get("properties", {})
+                    node_uuid = interpolated.get("uuid") or str(uuid.uuid4())
+                    
+                    # Execute node creation
+                    upsert_abox_node(
+                        graph=graph,
+                        class_name=class_name,
+                        uuid=node_uuid,
+                        properties=properties,
+                    )
+                    
+                    rollback_stack.append({
+                        "type": "delete_node",
+                        "uuid": node_uuid,
+                        "class_name": class_name
+                    })
+                    
+                    return {
+                        "uuid": node_uuid,
+                        **properties
+                    }
+
+                elif action == "create_relationship":
+                    from_class = interpolated.get("from_class")
+                    from_uuid = interpolated.get("from_uuid")
+                    relationship_name = interpolated.get("relationship_name")
+                    to_class = interpolated.get("to_class")
+                    to_uuid = interpolated_step.get("to_uuid") if (to_uuid := interpolated.get("to_uuid")) is None else to_uuid
+                    # Ensure we get interpolated fields correctly
+                    to_uuid_val = interpolated.get("to_uuid")
+                    properties = interpolated.get("properties", {})
+
+                    if not all([from_class, from_uuid, relationship_name, to_class, to_uuid_val]):
+                        raise ValueError(f"Missing required parameters for relationship step: {step_id}")
+
+                    # Execute relationship creation
+                    upsert_abox_relationship(
+                        graph=graph,
+                        from_class=from_class,
+                        from_uuid=from_uuid,
+                        relationship_name=relationship_name,
+                        to_class=to_class,
+                        to_uuid=to_uuid_val,
+                        properties=properties,
+                    )
+                    
+                    rollback_stack.append({
+                        "type": "delete_relationship",
+                        "from_uuid": from_uuid,
+                        "to_uuid": to_uuid_val,
+                        "relationship_name": relationship_name
+                    })
+                    
+                    return {
+                        "relationship_name": relationship_name,
+                        "from_uuid": from_uuid,
+                        "to_uuid": to_uuid_val
+                    }
+                elif action == "run_workflow":
+                    sub_wf_name = interpolated.get("workflow_name")
+                    sub_params = interpolated.get("parameters", {})
+                    if not sub_wf_name:
+                        raise ValueError("Missing workflow_name for run_workflow step")
+                    # Call run_workflow recursively
+                    sub_results = run_workflow(
+                        graph=graph,
+                        name=sub_wf_name,
+                        parameters=sub_params,
+                    )
+                    
+                    rollback_stack.append({
+                        "type": "sub_workflow",
+                        "results": sub_results
+                    })
+                    
+                    return sub_results
+                else:
+                    raise ValueError(f"Unsupported workflow action: {action}")
+
+            # 3.2. Loop Check (loop_over)
+            loop_over_var = step.get("loop_over")
+            if loop_over_var:
+                loop_items = _resolve_path(loop_over_var, context)
+                loop_var = step.get("loop_var") or "item"
+
+                # Normalize loop items
+                if loop_items is None:
+                    loop_items = []
+                elif not isinstance(loop_items, list):
+                    loop_items = [loop_items]
+
+                step_results = []
+                for item in loop_items:
+                    # Merge loop item value into temporary context
+                    sub_context = {**context, loop_var: item}
+                    interpolated_step = _interpolate(step, sub_context)
+                    res = _exec_single_action(interpolated_step)
+                    step_results.append(res)
                 
-                # Execute node creation
-                upsert_abox_node(
-                    graph=graph,
-                    class_name=class_name,
-                    uuid=node_uuid,
-                    properties=properties,
-                )
-                return {
-                    "uuid": node_uuid,
-                    **properties
-                }
-
-            elif action == "create_relationship":
-                from_class = interpolated.get("from_class")
-                from_uuid = interpolated.get("from_uuid")
-                relationship_name = interpolated.get("relationship_name")
-                to_class = interpolated.get("to_class")
-                to_uuid = interpolated_step.get("to_uuid") if (to_uuid := interpolated.get("to_uuid")) is None else to_uuid
-                # Ensure we get interpolated fields correctly
-                to_uuid_val = interpolated.get("to_uuid")
-                properties = interpolated.get("properties", {})
-
-                if not all([from_class, from_uuid, relationship_name, to_class, to_uuid_val]):
-                    raise ValueError(f"Missing required parameters for relationship step: {step_id}")
-
-                # Execute relationship creation
-                upsert_abox_relationship(
-                    graph=graph,
-                    from_class=from_class,
-                    from_uuid=from_uuid,
-                    relationship_name=relationship_name,
-                    to_class=to_class,
-                    to_uuid=to_uuid_val,
-                    properties=properties,
-                )
-                return {
-                    "relationship_name": relationship_name,
-                    "from_uuid": from_uuid,
-                    "to_uuid": to_uuid_val
-                }
-            elif action == "run_workflow":
-                sub_wf_name = interpolated.get("workflow_name")
-                sub_params = interpolated.get("parameters", {})
-                if not sub_wf_name:
-                    raise ValueError("Missing workflow_name for run_workflow step")
-                # Call run_workflow recursively
-                sub_results = run_workflow(
-                    graph=graph,
-                    name=sub_wf_name,
-                    parameters=sub_params,
-                )
-                return sub_results
+                # Save results array to context
+                context[step_id] = step_results
             else:
-                raise ValueError(f"Unsupported workflow action: {action}")
-
-        # 3.2. Loop Check (loop_over)
-        loop_over_var = step.get("loop_over")
-        if loop_over_var:
-            loop_items = _resolve_path(loop_over_var, context)
-            loop_var = step.get("loop_var") or "item"
-
-            # Normalize loop items
-            if loop_items is None:
-                loop_items = []
-            elif not isinstance(loop_items, list):
-                loop_items = [loop_items]
-
-            step_results = []
-            for item in loop_items:
-                # Merge loop item value into temporary context
-                sub_context = {**context, loop_var: item}
-                interpolated_step = _interpolate(step, sub_context)
+                # Normal execution
+                interpolated_step = _interpolate(step, context)
                 res = _exec_single_action(interpolated_step)
-                step_results.append(res)
-            
-            # Save results array to context
-            context[step_id] = step_results
-        else:
-            # Normal execution
-            interpolated_step = _interpolate(step, context)
-            res = _exec_single_action(interpolated_step)
-            context[step_id] = res
+                context[step_id] = res
+
+    except Exception as e:
+        # Roll back LIFO
+        for rollback_item in reversed(rollback_stack):
+            try:
+                _execute_rollback_item(graph, rollback_item)
+            except Exception as roll_err:
+                print(f"Error during rollback: {roll_err}")
+        raise e
 
     # Return only the execution results (exclude input parameters)
     results = {
@@ -222,3 +255,54 @@ def _resolve_path(path: str, context: dict[str, Any]) -> Any:
         else:
             return None
     return curr
+
+
+def _execute_rollback_item(graph: FalkorGraph, item: dict[str, Any]) -> None:
+    t = item.get("type")
+    if t == "delete_node":
+        uuid_val = item.get("uuid")
+        graph.query("MATCH (n {uuid: $uuid}) DETACH DELETE n", {"uuid": uuid_val})
+        
+    elif t == "delete_relationship":
+        from_uuid = item.get("from_uuid")
+        to_uuid = item.get("to_uuid")
+        rel_name = item.get("relationship_name")
+        graph.query(
+            f"MATCH (a {{uuid: $from_uuid}})-[r:{rel_name}]->(b {{uuid: $to_uuid}}) DELETE r",
+            {"from_uuid": from_uuid, "to_uuid": to_uuid}
+        )
+        
+    elif t == "sub_workflow":
+        sub_res = item.get("results", {})
+        _rollback_workflow_results(graph, sub_res)
+
+
+def _rollback_workflow_results(graph: FalkorGraph, results: dict[str, Any]) -> None:
+    for _, step_res in reversed(list(results.items())):
+        if not step_res:
+            continue
+        
+        if isinstance(step_res, list):
+            for item in reversed(step_res):
+                _rollback_single_step_result(graph, item)
+        else:
+            _rollback_single_step_result(graph, step_res)
+
+
+def _rollback_single_step_result(graph: FalkorGraph, step_res: Any) -> None:
+    if not isinstance(step_res, dict):
+        return
+    
+    if "relationship_name" in step_res and "from_uuid" in step_res and "to_uuid" in step_res:
+        rel_name = step_res["relationship_name"]
+        from_uuid = step_res["from_uuid"]
+        to_uuid = step_res["to_uuid"]
+        graph.query(
+            f"MATCH (a {{uuid: $from_uuid}})-[r:{rel_name}]->(b {{uuid: $to_uuid}}) DELETE r",
+            {"from_uuid": from_uuid, "to_uuid": to_uuid}
+        )
+    elif "uuid" in step_res:
+        node_uuid = step_res["uuid"]
+        graph.query("MATCH (n {uuid: $uuid}) DETACH DELETE n", {"uuid": node_uuid})
+    else:
+        _rollback_workflow_results(graph, step_res)
