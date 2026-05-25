@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -141,6 +143,36 @@ def run_latest_falkor_abox_validation(
                             metadata={"value": value, "count": count},
                         )
                     )
+
+            if binding.datatype and binding.datatype != "unknown" and binding.datatype != "any":
+                rows = _query_rows(
+                    graph,
+                    f"""
+                    MATCH (n:{label})
+                    WHERE n.{prop} IS NOT NULL
+                    RETURN n.uuid, ID(n), n.{prop}
+                    LIMIT 1000
+                    """
+                )
+                for row in rows:
+                    instance_uuid = _instance_uuid(row)
+                    val = row[2]
+                    is_valid = _validate_value_datatype(val, binding.datatype)
+                    if not is_valid:
+                        issues.append(
+                            _issue(
+                                code="invalid_property_datatype",
+                                severity="error",
+                                message=(
+                                    f"{class_info.name}.{binding.name} must be of type {binding.datatype} "
+                                    f"but got value: {val} (type: {type(val).__name__})"
+                                ),
+                                class_name=class_info.name,
+                                instance_uuid=instance_uuid,
+                                property_name=binding.name,
+                                metadata={"value": val, "expected_datatype": binding.datatype},
+                            )
+                        )
 
         for relationship in _load_outgoing_relationships(graph, class_info.name):
             rel_type = _safe_identifier(relationship.name, "relationship")
@@ -490,3 +522,118 @@ def _issue(
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _validate_value_datatype(val: Any, datatype: str) -> bool:
+    if val is None:
+        return True
+        
+    dt = datatype.lower()
+    
+    if dt in ("string", "str"):
+        return isinstance(val, str)
+        
+    elif dt in ("integer", "int"):
+        if isinstance(val, (int, float)):
+            if isinstance(val, float):
+                return val.is_integer()
+            return type(val) is int
+        if isinstance(val, str):
+            try:
+                int(val)
+                return True
+            except ValueError:
+                return False
+        return False
+        
+    elif dt in ("float", "number"):
+        if isinstance(val, (int, float)) and type(val) is not bool:
+            return True
+        if isinstance(val, str):
+            try:
+                float(val)
+                return True
+            except ValueError:
+                return False
+        return False
+        
+    elif dt in ("boolean", "bool"):
+        if isinstance(val, bool):
+            return True
+        if isinstance(val, (int, float)) and val in (0, 1, 0.0, 1.0):
+            return True
+        if isinstance(val, str) and val.lower() in ("true", "false", "0", "1"):
+            return True
+        return False
+        
+    elif dt == "email":
+        if not isinstance(val, str):
+            return False
+        return bool(re.match(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$", val))
+        
+    elif dt == "url":
+        if not isinstance(val, str):
+            return False
+        return val.startswith(("http://", "https://")) and len(val) > 10
+        
+    elif dt == "phone":
+        if not isinstance(val, (str, int)):
+            return False
+        val_str = str(val)
+        cleaned = re.sub(r"[+\-\s\(\)]", "", val_str)
+        return cleaned.isdigit() and len(cleaned) >= 7
+        
+    elif dt == "date":
+        if not isinstance(val, str):
+            return False
+        cleaned_date = val.replace(".", "-")
+        try:
+            datetime.strptime(cleaned_date, "%Y-%m-%d")
+            return True
+        except ValueError:
+            pass
+        try:
+            datetime.fromisoformat(val)
+            return True
+        except ValueError:
+            pass
+        return False
+        
+    elif dt == "datetime":
+        if not isinstance(val, str):
+            return False
+        try:
+            datetime.fromisoformat(val.replace("Z", "+00:00"))
+            return True
+        except ValueError:
+            pass
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+            try:
+                datetime.strptime(val, fmt)
+                return True
+            except ValueError:
+                pass
+        return False
+        
+    elif dt == "uuid":
+        if not isinstance(val, str):
+            return False
+        try:
+            uuid.UUID(val)
+            return True
+        except ValueError:
+            return False
+            
+    elif dt in ("json", "object", "array", "list"):
+        if isinstance(val, str):
+            if val.strip().startswith(("[", "{")):
+                try:
+                    import json
+                    json.loads(val)
+                    return True
+                except ValueError:
+                    return False
+            return False
+        return isinstance(val, (dict, list))
+        
+    return True

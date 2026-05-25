@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import pytest
+import uuid
 from typing import Any
+from falkordb import FalkorDB
 
 from data_oop import (
     ValidationIssue,
     ValidationReport,
     run_latest_falkor_abox_validation,
     store_latest_validation_report,
+    FalkorTBoxRepository,
 )
 
 
@@ -108,3 +112,90 @@ def test_run_latest_falkor_abox_validation_detects_required_property_and_stores_
     assert issue_params["class_name"] == "SalesChannel"
     assert issue_params["instance_uuid"] == "uuid_channel_1"
     assert issue_params["property_name"] == "channel_code"
+
+
+@pytest.fixture(scope="module")
+def falkor_graph():
+    db = FalkorDB(host="localhost", port=6380)
+    graph = db.select_graph("tbox_validation_test_temp")
+    
+    try:
+        graph.delete()
+    except Exception:
+        pass
+        
+    yield graph
+    
+    try:
+        graph.delete()
+    except Exception:
+        pass
+
+
+def test_run_latest_falkor_abox_validation_detects_datatype_violations(falkor_graph) -> None:
+    tbox_repo = FalkorTBoxRepository(falkor_graph)
+    tbox_repo.create_class("User", label="User", description="A user")
+    
+    tbox_repo.create_property("email_addr", datatype="email")
+    tbox_repo.create_property("birth_date", datatype="date")
+    tbox_repo.create_property("website", datatype="url")
+    tbox_repo.create_property("phone_num", datatype="phone")
+    tbox_repo.create_property("score", datatype="float")
+    tbox_repo.create_property("age", datatype="integer")
+    tbox_repo.create_property("is_active", datatype="boolean")
+    tbox_repo.create_property("user_id", datatype="uuid")
+
+    tbox_repo.attach_property_to_class(class_name="User", property_name="email_addr")
+    tbox_repo.attach_property_to_class(class_name="User", property_name="birth_date")
+    tbox_repo.attach_property_to_class(class_name="User", property_name="website")
+    tbox_repo.attach_property_to_class(class_name="User", property_name="phone_num")
+    tbox_repo.attach_property_to_class(class_name="User", property_name="score")
+    tbox_repo.attach_property_to_class(class_name="User", property_name="age")
+    tbox_repo.attach_property_to_class(class_name="User", property_name="is_active")
+    tbox_repo.attach_property_to_class(class_name="User", property_name="user_id")
+
+    # Insert invalid ABox node
+    node_uuid = str(uuid.uuid4())
+    falkor_graph.query(
+        """
+        CREATE (:User {
+            uuid: $uuid,
+            email_addr: "not-an-email",
+            birth_date: "not-a-date",
+            website: "not-a-url",
+            phone_num: "12",
+            score: "not-a-float",
+            age: 25.5,
+            is_active: "not-a-bool",
+            user_id: "not-a-uuid"
+        })
+        """,
+        {"uuid": node_uuid}
+    )
+
+    result = run_latest_falkor_abox_validation(graph=falkor_graph, run_id="run_datatype_test")
+
+    # We expect 8 errors because all 8 properties have invalid datatypes
+    assert result.status == "failed"
+    assert result.error_count == 8
+
+    # Verify we can fetch the issues and see they are invalid_property_datatype
+    # Let's inspect the created ValidationIssue nodes in FalkorDB
+    issues_res = falkor_graph.query(
+        "MATCH (r:ValidationRun)-[:HAS_ISSUE]->(i:ValidationIssue) RETURN i.propertyName, i.code ORDER BY i.propertyName"
+    ).result_set
+
+    # Match property names and codes
+    expected_issues = {
+        "email_addr": "invalid_property_datatype",
+        "birth_date": "invalid_property_datatype",
+        "website": "invalid_property_datatype",
+        "phone_num": "invalid_property_datatype",
+        "score": "invalid_property_datatype",
+        "age": "invalid_property_datatype",
+        "is_active": "invalid_property_datatype",
+        "user_id": "invalid_property_datatype",
+    }
+
+    actual_issues = {row[0]: row[1] for row in issues_res}
+    assert actual_issues == expected_issues
