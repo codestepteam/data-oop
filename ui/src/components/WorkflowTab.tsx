@@ -951,11 +951,47 @@ export function WorkflowTab({
                           </select>
                         </div>
                         <div>
-                          <label className="block text-[10px] font-bold text-slate-400 uppercase">Custom UUID (Optional)</label>
+                          <div className="flex justify-between items-center">
+                            <label className="block text-[10px] font-bold text-slate-400 uppercase">Custom UUID (Optional)</label>
+                            {/* Variable pills for Custom UUID */}
+                            {(editorParameters.length > 0 || (step.loop_over && step.loop_var) || idx > 0) && (
+                              <div className="flex flex-wrap gap-1">
+                                {editorParameters.map(p => (
+                                  <button
+                                    key={p.name}
+                                    type="button"
+                                    onClick={() => onUpdateStep(idx, { uuid: `{${p.name}}` })}
+                                    className="text-[9px] bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-100 rounded px-1 cursor-pointer"
+                                  >
+                                    {p.name}
+                                  </button>
+                                ))}
+                                {step.loop_over && step.loop_var && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onUpdateStep(idx, { uuid: `{${step.loop_var}}` })}
+                                    className="text-[9px] bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-100 rounded px-1 font-bold cursor-pointer"
+                                  >
+                                    {step.loop_var} (Loop)
+                                  </button>
+                                )}
+                                {editorSteps.slice(0, idx).map(prev => (
+                                  <button
+                                    key={prev.step_id}
+                                    type="button"
+                                    onClick={() => onUpdateStep(idx, { uuid: `{${prev.step_id}.uuid}` })}
+                                    className="text-[9px] bg-amber-50 text-amber-600 hover:bg-amber-100 border border-amber-100 rounded px-1 cursor-pointer"
+                                  >
+                                    {prev.step_id}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                           <div className="flex items-center space-x-1 mt-1">
                             <input
                               type="text"
-                              className="flex-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500"
+                              className="flex-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500 font-mono"
                               placeholder="Auto-generated if empty"
                               value={step.uuid || ""}
                               onChange={(e) => onUpdateStep(idx, { uuid: e.target.value })}
@@ -983,7 +1019,7 @@ export function WorkflowTab({
                                   {prop.name} {prop.required && <span className="text-rose-500">*</span>}
                                 </span>
                                 {/* Param quick pills */}
-                                {(editorParameters.length > 0 || (step.loop_over && step.loop_var)) && (
+                                {(editorParameters.length > 0 || (step.loop_over && step.loop_var) || idx > 0) && (
                                   <div className="flex flex-wrap gap-1">
                                     {editorParameters.map(p => (
                                       <button
@@ -993,7 +1029,7 @@ export function WorkflowTab({
                                           const newProps = { ...step.properties, [prop.name]: `{${p.name}}` };
                                           onUpdateStep(idx, { properties: newProps });
                                         }}
-                                        className="text-[9px] bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-100 rounded px-1"
+                                        className="text-[9px] bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-100 rounded px-1 cursor-pointer"
                                         title={`Use ${p.name}`}
                                       >
                                         {p.name}
@@ -1006,12 +1042,26 @@ export function WorkflowTab({
                                           const newProps = { ...step.properties, [prop.name]: `{${step.loop_var}}` };
                                           onUpdateStep(idx, { properties: newProps });
                                         }}
-                                        className="text-[9px] bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-100 rounded px-1 font-bold"
+                                        className="text-[9px] bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-100 rounded px-1 font-bold cursor-pointer"
                                         title={`Use Loop Variable ${step.loop_var}`}
                                       >
                                         {step.loop_var} (Loop)
                                       </button>
                                     )}
+                                    {editorSteps.slice(0, idx).map(prev => (
+                                      <button
+                                        key={prev.step_id}
+                                        type="button"
+                                        onClick={() => {
+                                          const newProps = { ...step.properties, [prop.name]: `{${prev.step_id}.uuid}` };
+                                          onUpdateStep(idx, { properties: newProps });
+                                        }}
+                                        className="text-[9px] bg-amber-50 text-amber-600 hover:bg-amber-100 border border-amber-100 rounded px-1 cursor-pointer font-medium"
+                                        title={`Use ${prev.step_id} UUID`}
+                                      >
+                                        {prev.step_id}
+                                      </button>
+                                    ))}
                                   </div>
                                 )}
                               </div>
