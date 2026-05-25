@@ -195,7 +195,7 @@ export function WorkflowTab({
   });
 
   const flowEdges: any[] = [];
-  editorSteps.forEach((step, idx) => {
+  editorSteps.forEach((step) => {
     const deps = getStepDependencies(step);
     const validDeps = deps.filter(depId => editorSteps.some(s => s.step_id === depId));
     
@@ -212,20 +212,6 @@ export function WorkflowTab({
             color: "#6366f1"
           }
         });
-      });
-    } else if (idx > 0) {
-      // Draw dashed sequential edge if no data dependency exists
-      const prevStepId = editorSteps[idx - 1].step_id;
-      flowEdges.push({
-        id: `edge-seq-${prevStepId}-${step.step_id}`,
-        source: prevStepId,
-        target: step.step_id,
-        animated: false,
-        style: { stroke: "#94a3b8", strokeDasharray: "5,5", strokeWidth: 1.5 },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#94a3b8"
-        }
       });
     }
   });
