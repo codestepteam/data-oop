@@ -96,9 +96,57 @@ export function WorkflowTab({
   // Local state for React Flow active step index
   const [activeStepIdx, setActiveStepIdx] = useState<number | null>(null);
 
+  // Local state for toggling execution results expansion
+  const [showRunResult, setShowRunResult] = useState(false);
+
+  // Helper to extract step dependencies from step properties / bindings
+  const getStepDependencies = (step: WorkflowStep): string[] => {
+    const deps: string[] = [];
+    const stepStr = JSON.stringify(step);
+    const regex = /\{([a-zA-Z0-9_]+)\.[a-zA-Z0-9_.]+\}/g;
+    let match;
+    while ((match = regex.exec(stepStr)) !== null) {
+      const stepId = match[1];
+      if (!deps.includes(stepId)) {
+        deps.push(stepId);
+      }
+    }
+    return deps;
+  };
+
+  // Calculate dynamic layout coordinates for DAG-like tree flow
+  const positions: Record<string, { x: number; y: number }> = {};
+  let colCount = 0;
+
+  editorSteps.forEach((step) => {
+    const deps = getStepDependencies(step);
+    const validDeps = deps.filter(depId => editorSteps.some(s => s.step_id === depId));
+
+    if (step.action === "create_relationship" && validDeps.length >= 1) {
+      let avgX = 0;
+      let maxY = 0;
+      validDeps.forEach(depId => {
+        const depPos = positions[depId] || { x: 50, y: 50 };
+        avgX += depPos.x;
+        maxY = Math.max(maxY, depPos.y);
+      });
+      positions[step.step_id] = {
+        x: avgX / validDeps.length,
+        y: maxY + 150
+      };
+    } else {
+      positions[step.step_id] = {
+        x: colCount * 280 + 50,
+        y: 50
+      };
+      colCount++;
+    }
+  });
+
   // Derive nodes and edges dynamically for React Flow
   const flowNodes = editorSteps.map((step, idx) => {
     const isSelected = activeStepIdx === idx;
+    const pos = positions[step.step_id] || { x: idx * 260 + 50, y: 50 };
     let subtitle = "";
     let bg = "bg-white border-slate-200 text-slate-800";
     
@@ -115,7 +163,7 @@ export function WorkflowTab({
 
     return {
       id: step.step_id,
-      position: { x: idx * 260 + 50, y: 50 },
+      position: pos,
       data: {
         label: (
           <div className={`p-3 rounded-lg shadow-sm border ${bg} text-left min-w-[200px] cursor-pointer`}>
@@ -143,20 +191,41 @@ export function WorkflowTab({
     };
   });
 
-  const flowEdges = [];
-  for (let i = 0; i < editorSteps.length - 1; i++) {
-    flowEdges.push({
-      id: `edge-${editorSteps[i].step_id}-${editorSteps[i+1].step_id}`,
-      source: editorSteps[i].step_id,
-      target: editorSteps[i+1].step_id,
-      animated: true,
-      style: { stroke: "#6366f1", strokeWidth: 2 },
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        color: "#6366f1"
-      }
-    });
-  }
+  const flowEdges: any[] = [];
+  editorSteps.forEach((step, idx) => {
+    const deps = getStepDependencies(step);
+    const validDeps = deps.filter(depId => editorSteps.some(s => s.step_id === depId));
+    
+    if (validDeps.length > 0) {
+      validDeps.forEach(depId => {
+        flowEdges.push({
+          id: `edge-${depId}-${step.step_id}`,
+          source: depId,
+          target: step.step_id,
+          animated: true,
+          style: { stroke: "#6366f1", strokeWidth: 2 },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: "#6366f1"
+          }
+        });
+      });
+    } else if (idx > 0) {
+      // Draw dashed sequential edge if no data dependency exists
+      const prevStepId = editorSteps[idx - 1].step_id;
+      flowEdges.push({
+        id: `edge-seq-${prevStepId}-${step.step_id}`,
+        source: prevStepId,
+        target: step.step_id,
+        animated: false,
+        style: { stroke: "#94a3b8", strokeDasharray: "5,5", strokeWidth: 1.5 },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: "#94a3b8"
+        }
+      });
+    }
+  });
 
   const handleAddParam = () => {
     if (!newParamName) return;
@@ -405,11 +474,20 @@ export function WorkflowTab({
             </div>
 
             {runResult && (
-              <div className="mt-4 pt-4 border-t border-slate-100">
-                <span className="block text-[11px] font-bold text-slate-400 mb-2 uppercase">Execution Results</span>
-                <pre className="bg-slate-900 text-indigo-300 text-[10px] p-3 rounded-lg overflow-x-auto max-h-48 font-mono">
-                  {JSON.stringify(runResult, null, 2)}
-                </pre>
+              <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRunResult(!showRunResult)}
+                  className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 rounded-lg text-xs font-semibold text-slate-600 border border-slate-200 transition-colors"
+                >
+                  <span>Execution Results ({runResult.status || (runResult.error ? "Failed" : "Success")})</span>
+                  <span className="text-[10px] text-indigo-600 font-bold font-mono">{showRunResult ? "Collapse" : "Expand"}</span>
+                </button>
+                {showRunResult && (
+                  <pre className="bg-slate-900 text-indigo-300 text-[10px] p-3 rounded-lg overflow-x-auto max-h-64 font-mono w-full">
+                    {JSON.stringify(runResult, null, 2)}
+                  </pre>
+                )}
               </div>
             )}
           </div>
@@ -690,7 +768,7 @@ export function WorkflowTab({
           {/* Pipeline Canvas & Steps Builder */}
           <div className="space-y-4">
             <span className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Visual Pipeline Flow</span>
-            <div className="h-[280px] w-full border border-slate-200 rounded-xl bg-slate-50 relative overflow-hidden mb-4">
+            <div className="h-[420px] w-full border border-slate-200 rounded-xl bg-slate-50 relative overflow-hidden mb-4">
               {editorSteps.length === 0 ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
                   <Code className="h-8 w-8 mb-2 text-slate-300 animate-pulse" />
