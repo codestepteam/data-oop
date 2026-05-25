@@ -99,6 +99,9 @@ export function WorkflowTab({
   // Local state for toggling execution results expansion
   const [showRunResult, setShowRunResult] = useState(false);
 
+  // Local state for toggling DSL / JSON code preview
+  const [showCodePreview, setShowCodePreview] = useState(false);
+
   // Helper to extract step dependencies from step properties / bindings
   const getStepDependencies = (step: WorkflowStep): string[] => {
     const deps: string[] = [];
@@ -492,10 +495,47 @@ export function WorkflowTab({
             )}
           </div>
         )}
+
+        {/* Collapsible DSL / JSON Preview (Faint One-Liner) */}
+        <div className="pt-2 border-t border-slate-100 text-slate-400">
+          <button
+            type="button"
+            onClick={() => setShowCodePreview(!showCodePreview)}
+            className="w-full flex items-center justify-between text-[10px] font-bold tracking-wide uppercase hover:text-slate-600 transition-colors py-1 cursor-pointer"
+          >
+            <span className="flex items-center space-x-1">
+              <Code className="h-3 w-3" />
+              <span>DSL & JSON Code Previews</span>
+            </span>
+            <span className="font-bold font-mono text-[9px] bg-slate-100 text-slate-500 px-1 rounded">{showCodePreview ? "Hide" : "Show"}</span>
+          </button>
+          {showCodePreview && (
+            <div className="mt-3 space-y-4 animate-fadeIn">
+              {/* Python DSL */}
+              <div className="border border-slate-200 rounded-lg overflow-hidden flex flex-col h-[280px]">
+                <div className="bg-slate-900 px-2 py-1 flex items-center justify-between text-white text-[9px] font-bold uppercase tracking-wider">
+                  <span>Python DSL</span>
+                </div>
+                <div className="p-2 flex-1 overflow-y-auto bg-slate-950 font-mono text-[9px] leading-normal text-indigo-300">
+                  <pre className="whitespace-pre-wrap">{generatePythonDSL()}</pre>
+                </div>
+              </div>
+              {/* JSON steps_json */}
+              <div className="border border-slate-200 rounded-lg overflow-hidden flex flex-col h-[200px]">
+                <div className="bg-slate-900 px-2 py-1 flex items-center justify-between text-white text-[9px] font-bold uppercase tracking-wider">
+                  <span>JSON steps_json</span>
+                </div>
+                <div className="p-2 flex-1 overflow-y-auto bg-slate-950 font-mono text-[9px] leading-normal text-indigo-300">
+                  <pre className="whitespace-pre-wrap">{JSON.stringify(editorSteps, null, 2)}</pre>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Middle Panel: Visual step-by-step editor */}
-      <div className="lg:col-span-5 space-y-6">
+      <div className="lg:col-span-9 space-y-6">
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="flex justify-between items-center mb-6">
             <h3 className="font-bold text-slate-900 text-base m-0">Workflow Steps Builder</h3>
@@ -1320,31 +1360,6 @@ export function WorkflowTab({
               <Plus className="h-4 w-4 text-emerald-500" />
               <span>Add Sub-Workflow</span>
             </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Right Panel: JSON Preview / Python DSL Generation */}
-      <div className="lg:col-span-4 space-y-6">
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[600px]">
-          <div className="bg-slate-900 px-4 py-3 flex items-center justify-between">
-            <span className="text-white text-xs font-bold uppercase tracking-wider flex items-center space-x-1">
-              <Code className="h-4 w-4 text-indigo-400" />
-              <span>Generated Code / DSL Preview</span>
-            </span>
-          </div>
-          
-          {/* Generated Code Tab view */}
-          <div className="p-4 flex-1 overflow-y-auto bg-slate-950 font-mono text-[11px] leading-relaxed text-indigo-300">
-            <pre className="whitespace-pre-wrap">{generatePythonDSL()}</pre>
-          </div>
-
-          {/* JSON Preview Footer */}
-          <div className="bg-slate-900 border-t border-slate-800 p-4">
-            <span className="block text-slate-400 text-[10px] uppercase font-bold mb-2">JSON Structure (steps_json)</span>
-            <pre className="text-slate-300 text-[9px] bg-slate-950 p-2.5 rounded border border-slate-800 overflow-x-auto max-h-32 font-mono">
-              {JSON.stringify(editorSteps, null, 2)}
-            </pre>
           </div>
         </div>
       </div>
