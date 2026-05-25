@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { X, Search, RefreshCw } from "lucide-react";
 
 interface NodeSelectorModalProps {

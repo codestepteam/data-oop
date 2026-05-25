@@ -37,7 +37,7 @@ export interface TBoxRelationship {
 
 export interface WorkflowStep {
   step_id: string;
-  action: "create_node" | "create_relationship";
+  action: "create_node" | "create_relationship" | "run_workflow";
   class_name?: string;
   properties?: Record<string, any>;
   uuid?: string;
@@ -49,6 +49,8 @@ export interface WorkflowStep {
   if_present?: string;
   loop_over?: string;
   loop_var?: string;
+  workflow_name?: string;
+  parameters?: Record<string, any>;
 }
 
 export interface WorkflowParameter {

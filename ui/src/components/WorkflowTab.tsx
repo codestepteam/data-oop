@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   FolderOpen,
   Plus,
@@ -8,9 +8,10 @@ import {
   Settings,
   Variable,
   Search,
-  Code,
-  RefreshCw
+  Code
 } from "lucide-react";
+import { ReactFlow, Background, Controls, MarkerType } from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import type { Workflow, WorkflowStep, WorkflowParameter, TBoxClass, TBoxRelationship } from "../types";
 
 interface WorkflowTabProps {
@@ -31,7 +32,7 @@ interface WorkflowTabProps {
   setRunParams: (v: any) => void;
   runResult: any;
   running: boolean;
-  onAddStep: (action: "create_node" | "create_relationship") => void;
+  onAddStep: (action: "create_node" | "create_relationship" | "run_workflow") => void;
   onRemoveStep: (idx: number) => void;
   onUpdateStep: (idx: number, fields: any) => void;
   onAddParameter: (p: WorkflowParameter) => boolean;
@@ -48,7 +49,6 @@ interface WorkflowTabProps {
 export function WorkflowTab({
   tbox,
   workflows,
-  loadingWorkflows,
   selectedWorkflow,
   editorName,
   setEditorName,
@@ -92,6 +92,71 @@ export function WorkflowTab({
 
   // Collapsible control settings per step
   const [expandedSettings, setExpandedSettings] = useState<Record<number, boolean>>({});
+
+  // Local state for React Flow active step index
+  const [activeStepIdx, setActiveStepIdx] = useState<number | null>(null);
+
+  // Derive nodes and edges dynamically for React Flow
+  const flowNodes = editorSteps.map((step, idx) => {
+    const isSelected = activeStepIdx === idx;
+    let subtitle = "";
+    let bg = "bg-white border-slate-200 text-slate-800";
+    
+    if (step.action === "create_node") {
+      subtitle = `Create Node: ${step.class_name}`;
+      bg = isSelected ? "bg-indigo-50 border-indigo-500 text-indigo-900 border-2" : "bg-white border-slate-300 text-slate-800";
+    } else if (step.action === "create_relationship") {
+      subtitle = `Link: ${step.relationship_name}`;
+      bg = isSelected ? "bg-amber-50 border-amber-500 text-amber-900 border-2" : "bg-white border-slate-300 text-slate-800";
+    } else if (step.action === "run_workflow") {
+      subtitle = `Sub-Workflow: ${step.workflow_name || "(empty)"}`;
+      bg = isSelected ? "bg-emerald-50 border-emerald-500 text-emerald-900 border-2" : "bg-white border-slate-300 text-slate-800";
+    }
+
+    return {
+      id: step.step_id,
+      position: { x: idx * 260 + 50, y: 50 },
+      data: {
+        label: (
+          <div className={`p-3 rounded-lg shadow-sm border ${bg} text-left min-w-[200px] cursor-pointer`}>
+            <div className="flex justify-between items-center">
+              <span className="font-mono text-xs font-bold">{step.step_id}</span>
+              <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 rounded text-slate-500 uppercase font-medium">
+                {step.action.replace("_", " ")}
+              </span>
+            </div>
+            <div className="text-[10px] text-slate-500 mt-1 font-semibold truncate">{subtitle}</div>
+            {step.loop_over && (
+              <div className="text-[9px] text-emerald-600 bg-emerald-50 border border-emerald-100 rounded px-1.5 py-0.5 mt-1.5 inline-block font-bold">
+                Loop: {step.loop_over}
+              </div>
+            )}
+            {step.if_present && (
+              <div className="text-[9px] text-blue-600 bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5 mt-1.5 inline-block ml-1">
+                If: {step.if_present}
+              </div>
+            )}
+          </div>
+        )
+      },
+      style: { background: "none", border: "none", padding: 0 }
+    };
+  });
+
+  const flowEdges = [];
+  for (let i = 0; i < editorSteps.length - 1; i++) {
+    flowEdges.push({
+      id: `edge-${editorSteps[i].step_id}-${editorSteps[i+1].step_id}`,
+      source: editorSteps[i].step_id,
+      target: editorSteps[i+1].step_id,
+      animated: true,
+      style: { stroke: "#6366f1", strokeWidth: 2 },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: "#6366f1"
+      }
+    });
+  }
 
   const handleAddParam = () => {
     if (!newParamName) return;
@@ -622,20 +687,50 @@ export function WorkflowTab({
             </div>
           </div>
 
-          {/* Steps List */}
+          {/* Pipeline Canvas & Steps Builder */}
           <div className="space-y-4">
-            {editorSteps.length === 0 ? (
-              <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-400">
-                <Settings className="h-10 w-10 text-slate-300 mx-auto mb-2" />
-                <p className="text-sm font-medium">No steps added yet</p>
-                <p className="text-xs text-slate-400 mt-1">Add steps below to start defining a workflow.</p>
-              </div>
-            ) : (
-              editorSteps.map((step, idx) => (
-                <div key={idx} className="border border-slate-200 rounded-xl p-4 bg-slate-50 space-y-3 relative">
+            <span className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Visual Pipeline Flow</span>
+            <div className="h-[280px] w-full border border-slate-200 rounded-xl bg-slate-50 relative overflow-hidden mb-4">
+              {editorSteps.length === 0 ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
+                  <Code className="h-8 w-8 mb-2 text-slate-300 animate-pulse" />
+                  <span className="text-xs font-medium">No steps defined. Add a step below to begin.</span>
+                </div>
+              ) : (
+                <ReactFlow
+                  nodes={flowNodes}
+                  edges={flowEdges}
+                  onNodeClick={(_, node) => {
+                    const idx = editorSteps.findIndex(s => s.step_id === node.id);
+                    if (idx !== -1) {
+                      setActiveStepIdx(idx);
+                    }
+                  }}
+                  fitView
+                  fitViewOptions={{ padding: 0.2 }}
+                  nodesConnectable={false}
+                  nodesDraggable={true}
+                >
+                  <Background color="#cbd5e1" gap={16} size={1} />
+                  <Controls showInteractive={false} />
+                </ReactFlow>
+              )}
+            </div>
+
+            {/* Selected Step Configurator */}
+            {activeStepIdx !== null && editorSteps[activeStepIdx] ? (() => {
+              const step = editorSteps[activeStepIdx];
+              const idx = activeStepIdx;
+              
+              return (
+                <div className="border border-slate-200 rounded-xl p-4 bg-slate-50 space-y-4 relative">
                   <button
-                    onClick={() => onRemoveStep(idx)}
+                    onClick={() => {
+                      onRemoveStep(idx);
+                      setActiveStepIdx(null);
+                    }}
                     className="absolute top-4 right-4 text-slate-400 hover:text-rose-500 transition-colors"
+                    title="Delete step"
                   >
                     <Trash className="h-4 w-4" />
                   </button>
@@ -644,7 +739,7 @@ export function WorkflowTab({
                     <span className="bg-indigo-600 text-white text-xs font-bold h-5 w-5 rounded-full flex items-center justify-center">
                       {idx + 1}
                     </span>
-                    <span className="font-bold text-sm text-slate-900">Step:</span>
+                    <span className="font-bold text-sm text-slate-900">Step ID:</span>
                     <input
                       type="text"
                       required
@@ -652,6 +747,9 @@ export function WorkflowTab({
                       value={step.step_id}
                       onChange={(e) => onUpdateStep(idx, { step_id: e.target.value })}
                     />
+                    <span className="text-[10px] px-2 py-0.5 bg-slate-200 rounded-full font-bold text-slate-600 uppercase tracking-wide">
+                      {step.action.replace("_", " ")}
+                    </span>
                   </div>
 
                   {/* Control Flow Settings Toggle */}
@@ -691,73 +789,49 @@ export function WorkflowTab({
                         </div>
                       </div>
 
-                      {/* Looping */}
+                      {/* Looped Run */}
                       <div>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Looping Execution</label>
-                        <div className="space-y-2">
-                          <label className="flex items-center space-x-1.5 font-medium text-slate-700">
-                            <input
-                              type="checkbox"
-                              className="rounded text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
-                              checked={!!step.loop_over}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  const firstArrayParam = editorParameters.find(p => p.type === "array")?.name || "";
-                                  const loopVar = firstArrayParam
-                                    ? firstArrayParam.replace(/_?uuids?$/i, "_uuid").replace(/_?ids?$/i, "_id").replace(/s$/i, "").replace(/_list$/i, "")
-                                    : "item";
-                                  onUpdateStep(idx, { loop_over: firstArrayParam, loop_var: loopVar || "item" });
-                                } else {
-                                  const nextStep = { ...step };
-                                  delete nextStep.loop_over;
-                                  delete nextStep.loop_var;
-                                  onUpdateStep(idx, nextStep);
-                                }
-                              }}
-                            />
-                            <span>Loop over list parameter</span>
-                          </label>
-
-                          {step.loop_over !== undefined && (
-                            <div className="grid grid-cols-2 gap-2 mt-1">
-                              <div>
-                                <label className="block text-[9px] text-slate-400">List Parameter</label>
-                                <select
-                                  className="w-full mt-0.5 px-2 py-1 border border-slate-300 rounded bg-white text-xs"
-                                  value={step.loop_over}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    const loopVar = val
-                                      ? val.replace(/_?uuids?$/i, "_uuid").replace(/_?ids?$/i, "_id").replace(/s$/i, "").replace(/_list$/i, "")
-                                      : "item";
-                                    onUpdateStep(idx, { loop_over: val, loop_var: loopVar || "item" });
-                                  }}
-                                >
-                                  <option value="">-- Select Array Param --</option>
-                                  {editorParameters.filter(p => p.type === "array").map(p => (
-                                    <option key={p.name} value={p.name}>{p.name}</option>
-                                  ))}
-                                </select>
-                              </div>
-                              <div>
-                                <label className="block text-[9px] text-slate-400">Loop Var Name</label>
-                                <input
-                                  type="text"
-                                  className="w-full mt-0.5 px-2 py-1 border border-slate-300 rounded font-mono text-xs"
-                                  placeholder="item"
-                                  value={step.loop_var || ""}
-                                  onChange={(e) => onUpdateStep(idx, { loop_var: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })}
-                                />
-                              </div>
-                            </div>
-                          )}
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Looped Run</label>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-slate-500">Loop over (array):</span>
+                          <select
+                            className="px-2 py-1 border border-slate-300 rounded focus:outline-none focus:border-indigo-500 bg-white text-xs font-mono"
+                            value={step.loop_over || ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              const singular = val ? val.replace(/_uuids$/, "_uuid").replace(/s$/, "") : "";
+                              onUpdateStep(idx, {
+                                loop_over: val || undefined,
+                                loop_var: val ? singular || "item" : undefined
+                              });
+                            }}
+                          >
+                            <option value="">No Loop</option>
+                            {editorParameters.filter(p => p.type === "array").map(p => (
+                              <option key={p.name} value={p.name}>{p.name}</option>
+                            ))}
+                            {editorSteps.slice(0, idx).map(prev => (
+                              <option key={prev.step_id} value={`${prev.step_id}.results`}>{prev.step_id}</option>
+                            ))}
+                          </select>
                         </div>
+                        {step.loop_over && (
+                          <div className="mt-2 flex items-center space-x-2">
+                            <span className="text-slate-500">Loop Variable:</span>
+                            <input
+                              type="text"
+                              className="px-2 py-1 border border-slate-300 rounded focus:outline-none focus:border-indigo-500 font-mono text-xs w-36"
+                              value={step.loop_var || "item"}
+                              onChange={(e) => onUpdateStep(idx, { loop_var: e.target.value })}
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
 
                   {/* Action details */}
-                  {step.action === "create_node" ? (
+                  {step.action === "create_node" && (
                     <div className="space-y-3">
                       <div className="grid grid-cols-2 gap-4">
                         <div>
@@ -848,24 +922,16 @@ export function WorkflowTab({
                                     onUpdateStep(idx, { properties: newProps });
                                   }}
                                 />
-                                <button
-                                  type="button"
-                                  onClick={() => openNodeSelector(step.class_name || "", (uuid) => {
-                                    const newProps = { ...step.properties, [prop.name]: uuid };
-                                    onUpdateStep(idx, { properties: newProps });
-                                  })}
-                                  className="px-2 py-1 border border-slate-300 bg-white hover:bg-slate-50 rounded-lg text-slate-500"
-                                >
-                                  <Search className="h-3 w-3" />
-                                </button>
                               </div>
                             </div>
                           ))}
                         </div>
                       </div>
                     </div>
-                  ) : (
-                    // Relationship step
+                  )}
+
+                  {/* Relationship Step Builder */}
+                  {step.action === "create_relationship" && (
                     (() => {
                       const allowedRels = tbox.relationships.filter(
                         r => r.from_class === step.from_class && r.to_class === step.to_class
@@ -1038,25 +1104,143 @@ export function WorkflowTab({
                       );
                     })()
                   )}
+
+                  {/* Run Sub-Workflow Step Builder */}
+                  {step.action === "run_workflow" && (
+                    <div className="space-y-3 text-xs">
+                      <div className="grid grid-cols-1 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase">Sub-Workflow Name</label>
+                          <select
+                            className="w-full mt-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:border-indigo-500 font-mono"
+                            value={step.workflow_name || ""}
+                            onChange={(e) => onUpdateStep(idx, { workflow_name: e.target.value, parameters: {} })}
+                          >
+                            <option value="">-- Select Sub-Workflow --</option>
+                            {workflows.filter(w => w.name !== editorName).map(w => (
+                              <option key={w.name} value={w.name}>{w.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      
+                      {/* Sub-workflow parameters mapping */}
+                      {step.workflow_name && (() => {
+                        const targetWf = workflows.find(w => w.name === step.workflow_name);
+                        if (!targetWf || !targetWf.parameters || targetWf.parameters.length === 0) {
+                          return <div className="text-[10px] text-slate-400 italic">No parameters required for this sub-workflow.</div>;
+                        }
+                        return (
+                          <div>
+                            <span className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Parameter Mappings</span>
+                            <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-3">
+                              {targetWf.parameters.map(param => (
+                                <div key={param.name} className="flex flex-col space-y-1">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-semibold text-slate-700 truncate font-mono">
+                                      {param.name} {param.required && <span className="text-rose-500">*</span>}
+                                    </span>
+                                    {/* Param pills */}
+                                    <div className="flex flex-wrap gap-1">
+                                      {editorParameters.map(p => (
+                                        <button
+                                          key={p.name}
+                                          type="button"
+                                          onClick={() => {
+                                            const newParams = { ...step.parameters, [param.name]: `{${p.name}}` };
+                                            onUpdateStep(idx, { parameters: newParams });
+                                          }}
+                                          className="text-[9px] bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-100 rounded px-1"
+                                        >
+                                          {p.name}
+                                        </button>
+                                      ))}
+                                      {step.loop_over && step.loop_var && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const newParams = { ...step.parameters, [param.name]: `{${step.loop_var}}` };
+                                            onUpdateStep(idx, { parameters: newParams });
+                                          }}
+                                          className="text-[9px] bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-100 rounded px-1 font-bold"
+                                        >
+                                          {step.loop_var} (Loop)
+                                        </button>
+                                      )}
+                                      {editorSteps.slice(0, idx).map(prev => (
+                                        <button
+                                          key={prev.step_id}
+                                          type="button"
+                                          onClick={() => {
+                                            const newParams = { ...step.parameters, [param.name]: `{${prev.step_id}.uuid}` };
+                                            onUpdateStep(idx, { parameters: newParams });
+                                          }}
+                                          className="text-[9px] bg-amber-50 text-amber-600 hover:bg-amber-100 border border-amber-100 rounded px-1"
+                                        >
+                                          {prev.step_id}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <input
+                                    type="text"
+                                    className="w-full px-2.5 py-1 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500 font-mono"
+                                    placeholder={param.required ? "Required" : "Optional"}
+                                    value={step.parameters?.[param.name] || ""}
+                                    onChange={(e) => {
+                                      const newParams = { ...step.parameters, [param.name]: e.target.value };
+                                      onUpdateStep(idx, { parameters: newParams });
+                                    }}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
-              ))
+              );
+            })() : (
+              <div className="border border-slate-200 border-dashed rounded-xl p-8 text-center text-slate-400 bg-slate-50">
+                <Settings className="h-10 w-10 text-slate-300 mx-auto mb-2" />
+                <p className="text-sm font-medium">No Step Selected</p>
+                <p className="text-xs text-slate-400 mt-1">Click any step node in the visual flowchart above to configure it.</p>
+              </div>
             )}
           </div>
 
           <div className="flex space-x-2 pt-4 border-t border-slate-100">
             <button
-              onClick={() => onAddStep("create_node")}
-              className="flex-1 flex items-center justify-center space-x-1.5 py-2.5 border-2 border-dashed border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+              onClick={() => {
+                onAddStep("create_node");
+                setActiveStepIdx(editorSteps.length);
+              }}
+              className="flex-1 flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
             >
-              <Plus className="h-4 w-4" />
-              <span>Create Node Step</span>
+              <Plus className="h-4 w-4 text-indigo-500" />
+              <span>Add Node Step</span>
             </button>
             <button
-              onClick={() => onAddStep("create_relationship")}
-              className="flex-1 flex items-center justify-center space-x-1.5 py-2.5 border-2 border-dashed border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+              onClick={() => {
+                onAddStep("create_relationship");
+                setActiveStepIdx(editorSteps.length);
+              }}
+              className="flex-1 flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
             >
-              <Plus className="h-4 w-4" />
-              <span>Link Step</span>
+              <Plus className="h-4 w-4 text-amber-500" />
+              <span>Add Link Step</span>
+            </button>
+            <button
+              onClick={() => {
+                onAddStep("run_workflow");
+                setActiveStepIdx(editorSteps.length);
+              }}
+              className="flex-1 flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+            >
+              <Plus className="h-4 w-4 text-emerald-500" />
+              <span>Add Sub-Workflow</span>
             </button>
           </div>
         </div>

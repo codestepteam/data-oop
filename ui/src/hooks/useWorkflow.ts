@@ -30,7 +30,7 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
     }
   }, []);
 
-  const addStep = useCallback((action: "create_node" | "create_relationship") => {
+  const addStep = useCallback((action: "create_node" | "create_relationship" | "run_workflow") => {
     const stepId = `step_${editorSteps.length + 1}`;
     if (action === "create_node") {
       setEditorSteps(steps => [
@@ -42,7 +42,7 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
           properties: {},
         },
       ]);
-    } else {
+    } else if (action === "create_relationship") {
       setEditorSteps(steps => [
         ...steps,
         {
@@ -53,6 +53,16 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
           relationship_name: tbox.relationships[0]?.name || "",
           to_class: tbox.classes[0]?.name || "",
           to_uuid: "",
+        },
+      ]);
+    } else {
+      setEditorSteps(steps => [
+        ...steps,
+        {
+          step_id: stepId,
+          action: "run_workflow",
+          workflow_name: "",
+          parameters: {},
         },
       ]);
     }

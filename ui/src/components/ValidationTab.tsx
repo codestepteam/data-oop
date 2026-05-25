@@ -1,4 +1,3 @@
-import React from "react";
 import { CheckCircle, AlertTriangle, RefreshCw } from "lucide-react";
 import type { ValidationRun, ValidationIssue } from "../types";
 

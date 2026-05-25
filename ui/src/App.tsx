@@ -1,8 +1,5 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Database } from "lucide-react";
-
-// Types
-import type { WorkflowStep } from "./types";
 
 // Hooks
 import { useTBox } from "./hooks/useTBox";
