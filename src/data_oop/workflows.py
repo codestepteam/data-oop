@@ -7,7 +7,6 @@ from typing import Any
 
 from .falkor import FalkorGraph
 from .falkor_abox import ABoxNodeResult, upsert_abox_node, upsert_abox_relationship
-from .falkor_repository import FalkorTBoxRepository
 
 
 def save_workflow(
@@ -15,45 +14,17 @@ def save_workflow(
     graph: FalkorGraph,
     name: str,
     steps: list[dict[str, Any]],
+    parameters: list[dict[str, Any]] | None = None,
     description: str | None = None,
 ) -> ABoxNodeResult:
-    """Register a WorkflowDefinition in the TBox (if missing) and save the workflow steps as an ABox node.
+    """Save the workflow steps as an ABox node in FalkorDB.
 
     This enables workflows to be fully defined and stored inside FalkorDB as data.
     """
-    # 1. Ensure WorkflowDefinition exists in TBox
-    tbox_repo = FalkorTBoxRepository(graph)
-    if not tbox_repo.get_class("WorkflowDefinition"):
-        # Define TBox metadata for WorkflowDefinition
-        tbox_repo.create_class(
-            "WorkflowDefinition",
-            label="WorkflowDefinition",
-            description="A dynamically defined low-code/no-code workflow definition",
-        )
-        tbox_repo.create_property("name", datatype="string", description="Name of the workflow")
-        tbox_repo.create_property("steps_json", datatype="string", description="JSON serialized steps of the workflow")
-        tbox_repo.create_property("description", datatype="string", description="Optional description")
-        
-        tbox_repo.attach_property_to_class(
-            class_name="WorkflowDefinition",
-            property_name="name",
-            required=True,
-            unique=True,
-        )
-        tbox_repo.attach_property_to_class(
-            class_name="WorkflowDefinition",
-            property_name="steps_json",
-            required=True,
-        )
-        tbox_repo.attach_property_to_class(
-            class_name="WorkflowDefinition",
-            property_name="description",
-            required=False,
-        )
-
     # 2. Save/Upsert Workflow ABox Node
     workflow_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"workflow:{name}"))
     steps_str = json.dumps(steps, ensure_ascii=False)
+    params_str = json.dumps(parameters or [], ensure_ascii=False)
     
     return upsert_abox_node(
         graph=graph,
@@ -62,6 +33,7 @@ def save_workflow(
         properties={
             "name": name,
             "steps_json": steps_str,
+            "parameters_json": params_str,
             "description": description,
         },
     )
@@ -94,7 +66,14 @@ def run_workflow(
 
     # 2. Setup context for variable interpolation
     # Context contains parameters and results of executed steps
-    context = dict(parameters)
+    context = {}
+    for k, v in parameters.items():
+        if isinstance(v, str) and v.strip().startswith("[") and v.strip().endswith("]"):
+            try:
+                v = json.loads(v)
+            except Exception:
+                pass
+        context[k] = v
 
     # 3. Execute steps sequentially
     for step in steps:
@@ -103,53 +82,91 @@ def run_workflow(
         if not step_id or not action:
             raise ValueError(f"Invalid step configuration: {step}")
 
-        # Interpolate variables in step parameters
-        interpolated_step = _interpolate(step, context)
+        # 3.1. Condition Check (if_present)
+        if_present_var = step.get("if_present")
+        if if_present_var:
+            val = _resolve_path(if_present_var, context)
+            if val is None or val == "" or val == []:
+                # Skip this step since the optional variable is missing or empty
+                continue
 
-        if action == "create_node":
-            class_name = interpolated_step.get("class_name")
-            properties = interpolated_step.get("properties", {})
-            node_uuid = interpolated_step.get("uuid") or str(uuid.uuid4())
+        # Helper to execute a single step action with a given interpolated state
+        def _exec_single_action(interpolated: dict[str, Any]) -> Any:
+            if action == "create_node":
+                class_name = interpolated.get("class_name")
+                properties = interpolated.get("properties", {})
+                node_uuid = interpolated.get("uuid") or str(uuid.uuid4())
+                
+                # Execute node creation
+                upsert_abox_node(
+                    graph=graph,
+                    class_name=class_name,
+                    uuid=node_uuid,
+                    properties=properties,
+                )
+                return {
+                    "uuid": node_uuid,
+                    **properties
+                }
+
+            elif action == "create_relationship":
+                from_class = interpolated.get("from_class")
+                from_uuid = interpolated.get("from_uuid")
+                relationship_name = interpolated.get("relationship_name")
+                to_class = interpolated.get("to_class")
+                to_uuid = interpolated_step.get("to_uuid") if (to_uuid := interpolated.get("to_uuid")) is None else to_uuid
+                # Ensure we get interpolated fields correctly
+                to_uuid_val = interpolated.get("to_uuid")
+                properties = interpolated.get("properties", {})
+
+                if not all([from_class, from_uuid, relationship_name, to_class, to_uuid_val]):
+                    raise ValueError(f"Missing required parameters for relationship step: {step_id}")
+
+                # Execute relationship creation
+                upsert_abox_relationship(
+                    graph=graph,
+                    from_class=from_class,
+                    from_uuid=from_uuid,
+                    relationship_name=relationship_name,
+                    to_class=to_class,
+                    to_uuid=to_uuid_val,
+                    properties=properties,
+                )
+                return {
+                    "relationship_name": relationship_name,
+                    "from_uuid": from_uuid,
+                    "to_uuid": to_uuid_val
+                }
+            else:
+                raise ValueError(f"Unsupported workflow action: {action}")
+
+        # 3.2. Loop Check (loop_over)
+        loop_over_var = step.get("loop_over")
+        if loop_over_var:
+            loop_items = _resolve_path(loop_over_var, context)
+            loop_var = step.get("loop_var") or "item"
+
+            # Normalize loop items
+            if loop_items is None:
+                loop_items = []
+            elif not isinstance(loop_items, list):
+                loop_items = [loop_items]
+
+            step_results = []
+            for item in loop_items:
+                # Merge loop item value into temporary context
+                sub_context = {**context, loop_var: item}
+                interpolated_step = _interpolate(step, sub_context)
+                res = _exec_single_action(interpolated_step)
+                step_results.append(res)
             
-            # Execute node creation
-            upsert_abox_node(
-                graph=graph,
-                class_name=class_name,
-                uuid=node_uuid,
-                properties=properties,
-            )
-            
-            # Save step results to context so subsequent steps can refer to them
-            # E.g. { "create_event": { "uuid": "xxx", "name": "yyy" } }
-            context[step_id] = {
-                "uuid": node_uuid,
-                **properties
-            }
-
-        elif action == "create_relationship":
-            from_class = interpolated_step.get("from_class")
-            from_uuid = interpolated_step.get("from_uuid")
-            relationship_name = interpolated_step.get("relationship_name")
-            to_class = interpolated_step.get("to_class")
-            to_uuid = interpolated_step.get("to_uuid")
-            properties = interpolated_step.get("properties", {})
-
-            if not all([from_class, from_uuid, relationship_name, to_class, to_uuid]):
-                raise ValueError(f"Missing required parameters for relationship step: {step_id}")
-
-            # Execute relationship creation
-            upsert_abox_relationship(
-                graph=graph,
-                from_class=from_class,
-                from_uuid=from_uuid,
-                relationship_name=relationship_name,
-                to_class=to_class,
-                to_uuid=to_uuid,
-                properties=properties,
-            )
-
+            # Save results array to context
+            context[step_id] = step_results
         else:
-            raise ValueError(f"Unsupported workflow action: {action}")
+            # Normal execution
+            interpolated_step = _interpolate(step, context)
+            res = _exec_single_action(interpolated_step)
+            context[step_id] = res
 
     # Return only the execution results (exclude input parameters)
     results = {

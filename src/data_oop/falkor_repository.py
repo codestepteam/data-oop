@@ -960,8 +960,9 @@ class FalkorTBoxRepository:
         rows = self._query(
             """
             MATCH (r:TBox:RelationshipDef {id: $id})
-            MATCH (r)-[f:FROM_CLASS]->()
-            RETURN r.id, r.name, r.from_class, r.to_class, f.minCount, f.maxCount, f.required, r.description, r.metadata
+            MATCH (r)-[f:FROM_CLASS]->(from:ClassDef)
+            MATCH (r)-[:TO_CLASS]->(to:ClassDef)
+            RETURN r.id, r.name, from.name, to.name, f.minCount, f.maxCount, f.required, r.description, r.metadata
             """,
             {"id": id}
         )
@@ -1149,15 +1150,21 @@ class FalkorTBoxRepository:
         to_class: str | None = None,
         name: str | None = None,
     ) -> list[RelationshipDef]:
-        query_parts = ["MATCH (r:TBox:RelationshipDef) MATCH (r)-[f:FROM_CLASS]->()"]
+        query_parts = [
+            """
+            MATCH (r:TBox:RelationshipDef)
+            MATCH (r)-[f:FROM_CLASS]->(from:ClassDef)
+            MATCH (r)-[:TO_CLASS]->(to:ClassDef)
+            """
+        ]
         conditions = []
         params = {}
         
         if from_class is not None:
-            conditions.append("r.from_class = $from_class")
+            conditions.append("from.name = $from_class")
             params["from_class"] = from_class
         if to_class is not None:
-            conditions.append("r.to_class = $to_class")
+            conditions.append("to.name = $to_class")
             params["to_class"] = to_class
         if name is not None:
             conditions.append("r.name = $name")
@@ -1166,7 +1173,7 @@ class FalkorTBoxRepository:
         if conditions:
             query_parts.append("WHERE " + " AND ".join(conditions))
             
-        query_parts.append("RETURN r.id, r.name, r.from_class, r.to_class, f.minCount, f.maxCount, f.required, r.description, r.metadata")
+        query_parts.append("RETURN r.id, r.name, from.name, to.name, f.minCount, f.maxCount, f.required, r.description, r.metadata")
         
         rows = self._query(" ".join(query_parts), params)
         relationships = [
@@ -1191,9 +1198,9 @@ class FalkorTBoxRepository:
         rows = self._query(
             """
             MATCH (r:TBox:RelationshipDef)
-            WHERE r.from_class = $from_class
-              AND r.name = $relationship_name
-              AND r.to_class = $to_class
+            MATCH (r)-[:FROM_CLASS]->(from:ClassDef {name: $from_class})
+            MATCH (r)-[:TO_CLASS]->(to:ClassDef {name: $to_class})
+            WHERE r.name = $relationship_name
             RETURN count(r)
             """,
             {"from_class": from_class, "relationship_name": relationship_name, "to_class": to_class}

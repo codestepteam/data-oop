@@ -1,9 +1,8 @@
 # Project Agent Notes
 
 - 사용자의 지시가 기존 프로젝트 원칙, 모델링 규칙, 데이터 안전성, 라이브 graph 변경/삭제, 보안/credential 처리 측면에서 문제가 될 수 있거나 의도가 불명확하면, 작업을 진행하기 전에 예상 문제를 짚고 사용자에게 다시 확인한다.
-- 라이브 TBox는 FalkorDB graph `commerce_data_oop`에 있다.
-- 커머스 TBox preset 파일은 유지하지 않는다.
-- 커머스 TBox 변경은 사용자가 요청한 경우 FalkorDB `commerce_data_oop` live graph를 갱신한다.
+- 라이브 TBox는 FalkorDB graph `data_oop`에 있다.
+- TBox 변경은 사용자가 요청한 경우 FalkorDB `data_oop` live graph를 갱신한다.
 - 단, live graph 변경은 raw Cypher를 바로 쓰기보다 이 프로젝트의 Python 라이브러리 함수를 통해 수행하는 것을 기본 원칙으로 한다.
 - 필요한 라이브러리 함수가 없으면 먼저 `src/data_oop`에 함수를 추가/고도화하고, 그 함수를 사용해서 변경한다.
 - 반복되는 작업 흐름은 스크립트에 임시로 두지 말고 라이브러리 함수로 추출한다.
@@ -24,7 +23,7 @@ Browser 내부 DB Host: localhost
 Browser 내부 DB Port: 6379
 Python/loader Host: localhost 또는 macmini
 Python/loader Port: 6380
-Graph: commerce_data_oop
+Graph: data_oop
 Username: default 또는 공백
 Password: 공백
 ```
@@ -41,7 +40,7 @@ Password: 공백
 ## Validation 운영
 
 ```bash
-uv run python scripts/run_validation.py --host localhost --port 6380 --graph commerce_data_oop
+uv run python scripts/run_validation.py --host localhost --port 6380 --graph data_oop
 ```
 
 남는 validation 노드는 항상 최신 실행 결과 하나다.

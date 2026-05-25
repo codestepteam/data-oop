@@ -53,7 +53,7 @@ class FalkorLoadResult:
 def connect_and_load_tbox_to_falkor(
     repo: TBoxRepository,
     *,
-    graph_name: str = "commerce_data_oop",
+    graph_name: str = "data_oop",
     host: str = "localhost",
     port: int = 6380,
     username: str | None = None,

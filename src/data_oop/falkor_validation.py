@@ -220,7 +220,7 @@ def run_latest_falkor_abox_validation(
 
 def connect_and_run_latest_falkor_abox_validation(
     *,
-    graph_name: str = "commerce_data_oop",
+    graph_name: str = "data_oop",
     host: str = "localhost",
     port: int = 6380,
     username: str | None = None,

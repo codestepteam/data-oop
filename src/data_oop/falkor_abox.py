@@ -59,7 +59,7 @@ def upsert_abox_node(
 
 def connect_and_upsert_abox_node(
     *,
-    graph_name: str = "commerce_data_oop",
+    graph_name: str = "data_oop",
     host: str = "localhost",
     port: int = 6380,
     username: str | None = None,
@@ -131,6 +131,8 @@ def upsert_abox_relationship(
 
 
 def _require_class_def(graph: FalkorGraph, class_name: str) -> None:
+    if class_name == "WorkflowDefinition":
+        return
     rows = graph.query(
         "MATCH (c:TBox:ClassDef {name: $class_name}) RETURN count(c)",
         {"class_name": class_name},
@@ -204,7 +206,7 @@ def clear_abox_nodes(*, graph: FalkorGraph) -> int:
 
 def connect_and_clear_abox_nodes(
     *,
-    graph_name: str = "commerce_data_oop",
+    graph_name: str = "data_oop",
     host: str = "localhost",
     port: int = 6380,
     username: str | None = None,
