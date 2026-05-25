@@ -137,6 +137,18 @@ def run_workflow(
                     "from_uuid": from_uuid,
                     "to_uuid": to_uuid_val
                 }
+            elif action == "run_workflow":
+                sub_wf_name = interpolated.get("workflow_name")
+                sub_params = interpolated.get("parameters", {})
+                if not sub_wf_name:
+                    raise ValueError("Missing workflow_name for run_workflow step")
+                # Call run_workflow recursively
+                sub_results = run_workflow(
+                    graph=graph,
+                    name=sub_wf_name,
+                    parameters=sub_params,
+                )
+                return sub_results
             else:
                 raise ValueError(f"Unsupported workflow action: {action}")
 

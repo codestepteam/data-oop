@@ -243,3 +243,119 @@ def test_conditional_and_loop_workflow_execution(falkor_graph) -> None:
     assert results_str["link_products"][0]["to_uuid"] == product1_uuid
     assert results_str["link_products"][1]["to_uuid"] == product2_uuid
 
+
+def test_nested_workflow_execution(falkor_graph) -> None:
+    tbox_repo = FalkorTBoxRepository(falkor_graph)
+    # Ensure classes and properties exist
+    tbox_repo.create_class("Product", label="Product", description="A product")
+    tbox_repo.create_class("Event", label="Event", description="An event")
+    tbox_repo.create_property("name", datatype="string")
+    tbox_repo.create_property("description", datatype="string")
+    tbox_repo.attach_property_to_class(class_name="Product", property_name="name", required=True)
+    tbox_repo.attach_property_to_class(class_name="Product", property_name="description")
+    tbox_repo.attach_property_to_class(class_name="Event", property_name="name", required=True)
+    tbox_repo.define_relationship(
+        id="rel_event_includes_product",
+        name="INCLUDES",
+        from_class="Event",
+        to_class="Product",
+    )
+
+    # 1. Define and Save Sub-Workflow (creates a Product)
+    sub_steps = [
+        {
+            "step_id": "create_prod",
+            "action": "create_node",
+            "class_name": "Product",
+            "properties": {
+                "name": "{prod_name}",
+                "description": "{prod_desc}"
+            }
+        }
+    ]
+    sub_params = [
+        { "name": "prod_name", "type": "string", "required": True },
+        { "name": "prod_desc", "type": "string" }
+    ]
+    save_workflow(
+        graph=falkor_graph,
+        name="create_product_sub_wf",
+        steps=sub_steps,
+        parameters=sub_params,
+        description="Sub workflow to create a product"
+    )
+
+    # 2. Define and Save Parent Workflow (creates Event, calls Sub-Workflow, links them)
+    parent_steps = [
+        {
+            "step_id": "create_evt",
+            "action": "create_node",
+            "class_name": "Event",
+            "properties": {
+                "name": "{event_name}"
+            }
+        },
+        {
+            "step_id": "call_sub",
+            "action": "run_workflow",
+            "workflow_name": "create_product_sub_wf",
+            "parameters": {
+                "prod_name": "{product_name}",
+                "prod_desc": "{product_desc}"
+            }
+        },
+        {
+            "step_id": "link_event_prod",
+            "action": "create_relationship",
+            "from_class": "Event",
+            "from_uuid": "{create_evt.uuid}",
+            "relationship_name": "INCLUDES",
+            "to_class": "Product",
+            "to_uuid": "{call_sub.create_prod.uuid}"
+        }
+    ]
+    parent_params = [
+        { "name": "event_name", "type": "string", "required": True },
+        { "name": "product_name", "type": "string", "required": True },
+        { "name": "product_desc", "type": "string" }
+    ]
+    save_workflow(
+        graph=falkor_graph,
+        name="parent_wf",
+        steps=parent_steps,
+        parameters=parent_params,
+        description="Parent workflow with nested workflow execution"
+    )
+
+    # 3. Run Parent Workflow
+    p_params = {
+        "event_name": "Expo 2026",
+        "product_name": "Super Widget",
+        "product_desc": "State of the art widget"
+    }
+
+    results = run_workflow(
+        graph=falkor_graph,
+        name="parent_wf",
+        parameters=p_params,
+    )
+
+    # Verification
+    assert "create_evt" in results
+    assert "call_sub" in results
+    assert "create_prod" in results["call_sub"]
+    assert "link_event_prod" in results
+
+    event_uuid = results["create_evt"]["uuid"]
+    product_uuid = results["call_sub"]["create_prod"]["uuid"]
+    
+    assert results["link_event_prod"]["from_uuid"] == event_uuid
+    assert results["link_event_prod"]["to_uuid"] == product_uuid
+
+    # Query DB to verify relationship exists
+    rel_exists = falkor_graph.query(
+        "MATCH (e:Event {uuid: $e_uuid})-[r:INCLUDES]->(p:Product {uuid: $p_uuid}) RETURN count(r)",
+        {"e_uuid": event_uuid, "p_uuid": product_uuid}
+    ).result_set[0][0]
+    assert rel_exists == 1
+
