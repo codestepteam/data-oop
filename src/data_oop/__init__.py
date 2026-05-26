@@ -15,6 +15,8 @@ from .falkor_abox import (
     upsert_abox_relationship,
     clear_abox_nodes,
     connect_and_clear_abox_nodes,
+    delete_abox_element,
+    connect_and_delete_abox_element,
 )
 from .falkor_validation import (
     FalkorValidationResult,
@@ -82,6 +84,8 @@ __all__ = [
     "upsert_abox_relationship",
     "clear_abox_nodes",
     "connect_and_clear_abox_nodes",
+    "delete_abox_element",
+    "connect_and_delete_abox_element",
     "save_workflow",
     "run_workflow",
     "WorkflowBuilder",

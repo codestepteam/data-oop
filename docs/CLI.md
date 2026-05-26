@@ -134,6 +134,17 @@ Creates or updates a single ABox relationship link directly between two nodes wi
 data-oop abox-upsert-relationship --from-class Department --from-uuid dept-it-01 --name RUNS --to-class Project --to-uuid proj-cloud-migration --properties '{"since": "2026-05-26"}'
 ```
 
+### K. `abox-delete`
+
+Deletes a single ABox node instance (and detaches its relationships) or a single relationship edge by its UUID.
+```bash
+# Delete a node by UUID
+data-oop abox-delete --uuid dept-it-01
+
+# Delete a relationship edge by its generated edge UUID (format: from_uuid:relationship_name:to_uuid)
+data-oop abox-delete --uuid dept-it-01:RUNS:proj-cloud-migration
+```
+
 ---
 
 ## 4. CI/CD Integration

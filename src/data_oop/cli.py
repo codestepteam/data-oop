@@ -16,6 +16,7 @@ from data_oop import (
     run_workflow,
     connect_and_upsert_abox_node,
     upsert_abox_relationship,
+    connect_and_delete_abox_element,
 )
 
 
@@ -324,6 +325,31 @@ def cmd_abox_upsert_relationship(args: argparse.Namespace) -> None:
     print("ABox relationship upserted successfully.")
 
 
+def cmd_abox_delete(args: argparse.Namespace) -> None:
+    """Delete an ABox node or relationship by uuid."""
+    host = os.environ.get("FALKOR_HOST", args.host)
+    port = int(os.environ.get("FALKOR_PORT", str(args.port)))
+    graph_name = os.environ.get("FALKOR_GRAPH", args.graph)
+    username = os.environ.get("FALKOR_USERNAME", args.username)
+    password = os.environ.get("FALKOR_PASSWORD", args.password)
+
+    print(f"Deleting ABox element with uuid '{args.uuid}' from graph '{graph_name}'...")
+    nodes_deleted, rels_deleted = connect_and_delete_abox_element(
+        graph_name=graph_name,
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        uuid=args.uuid,
+    )
+    if nodes_deleted > 0:
+        print(f"Successfully deleted ABox node: uuid={args.uuid}")
+    elif rels_deleted > 0:
+        print(f"Successfully deleted ABox relationship: uuid={args.uuid}")
+    else:
+        print(f"No node or relationship found with uuid '{args.uuid}'.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="CLI utility for data-oop FalkorDB TBox and ABox schema operations."
@@ -416,6 +442,11 @@ def main() -> None:
     p_abox_rel.add_argument("--to-uuid", required=True, help="To node UUID")
     p_abox_rel.add_argument("--properties", help="JSON string of relationship property values")
     p_abox_rel.set_defaults(func=cmd_abox_upsert_relationship)
+
+    # abox-delete
+    p_abox_del = subparsers.add_parser("abox-delete", help="Delete a single ABox node or relationship by uuid")
+    p_abox_del.add_argument("--uuid", required=True, help="UUID of the node or relationship to delete")
+    p_abox_del.set_defaults(func=cmd_abox_delete)
 
     args = parser.parse_args()
 

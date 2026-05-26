@@ -218,3 +218,54 @@ def connect_and_clear_abox_nodes(
     db = FalkorDB(host=host, port=port, username=username, password=password)
     graph = db.select_graph(graph_name)
     return clear_abox_nodes(graph=graph)
+
+
+def delete_abox_element(*, graph: FalkorGraph, uuid: str) -> tuple[int, int]:
+    """Delete a node or relationship by its uuid from ABox.
+
+    Returns (nodes_deleted, relationships_deleted).
+    """
+    # 1. Try to match and delete relationship (edge) first
+    res_rel = graph.query(
+        "MATCH (a)-[r]->(b) WHERE r.uuid = $uuid RETURN count(r)",
+        {"uuid": uuid}
+    ).result_set
+    rel_count = int(res_rel[0][0]) if res_rel else 0
+    if rel_count > 0:
+        graph.query(
+            "MATCH (a)-[r]->(b) WHERE r.uuid = $uuid DELETE r",
+            {"uuid": uuid}
+        )
+        return 0, rel_count
+
+    # 2. Try to match and detach-delete node
+    res_node = graph.query(
+        "MATCH (n) WHERE n.uuid = $uuid RETURN count(n)",
+        {"uuid": uuid}
+    ).result_set
+    node_count = int(res_node[0][0]) if res_node else 0
+    if node_count > 0:
+        graph.query(
+            "MATCH (n) WHERE n.uuid = $uuid DETACH DELETE n",
+            {"uuid": uuid}
+        )
+        return node_count, 0
+
+    return 0, 0
+
+
+def connect_and_delete_abox_element(
+    *,
+    graph_name: str = "data_oop",
+    host: str = "localhost",
+    port: int = 6380,
+    username: str | None = None,
+    password: str | None = None,
+    uuid: str,
+) -> tuple[int, int]:
+    """Connect to FalkorDB and delete an ABox node or relationship by uuid."""
+    from falkordb import FalkorDB
+
+    db = FalkorDB(host=host, port=port, username=username, password=password)
+    graph = db.select_graph(graph_name)
+    return delete_abox_element(graph=graph, uuid=uuid)

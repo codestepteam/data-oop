@@ -222,3 +222,25 @@ def test_cli_abox_upsert_relationship(mock_get_db, mock_upsert_rel) -> None:
         to_uuid="group-1",
         properties={"since": "2026-01-01"}
     )
+
+
+@patch("data_oop.cli.connect_and_delete_abox_element")
+def test_cli_abox_delete(mock_delete) -> None:
+    mock_delete.return_value = (1, 0)  # mock node deletion
+
+    test_args = [
+        "data-oop",
+        "abox-delete",
+        "--uuid", "my-uuid"
+    ]
+    with patch.object(sys, "argv", test_args):
+        main()
+
+    mock_delete.assert_called_once_with(
+        graph_name="data_oop",
+        host="localhost",
+        port=6380,
+        username=None,
+        password=None,
+        uuid="my-uuid"
+    )

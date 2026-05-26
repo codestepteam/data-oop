@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from data_oop import upsert_abox_node, upsert_abox_relationship, clear_abox_nodes
+from data_oop import upsert_abox_node, upsert_abox_relationship, clear_abox_nodes, delete_abox_element
 
 
 class FakeResult:
@@ -108,3 +108,39 @@ def test_clear_abox_nodes_deletes_non_tbox_nodes() -> None:
     delete_query = graph.calls[1][0]
     assert "DETACH DELETE n" in delete_query
     assert "NOT n:TBox" in delete_query
+
+
+def test_delete_abox_element_relationship() -> None:
+    class RelFakeGraph(FakeGraph):
+        def query(self, q: str, params: dict[str, object] | None = None, timeout: int | None = None) -> FakeResult:
+            self.calls.append((q, params))
+            compact = " ".join(q.split())
+            if "RETURN count(r)" in compact:
+                return FakeResult([[1]])
+            if "RETURN count(n)" in compact:
+                return FakeResult([[0]])
+            return FakeResult([["ok"]])
+
+    graph = RelFakeGraph()
+    nodes, rels = delete_abox_element(graph=graph, uuid="rel-uuid")
+    assert nodes == 0
+    assert rels == 1
+    assert any("DELETE r" in q for q, _ in graph.calls)
+
+
+def test_delete_abox_element_node() -> None:
+    class NodeFakeGraph(FakeGraph):
+        def query(self, q: str, params: dict[str, object] | None = None, timeout: int | None = None) -> FakeResult:
+            self.calls.append((q, params))
+            compact = " ".join(q.split())
+            if "RETURN count(r)" in compact:
+                return FakeResult([[0]])
+            if "RETURN count(n)" in compact:
+                return FakeResult([[1]])
+            return FakeResult([["ok"]])
+
+    graph = NodeFakeGraph()
+    nodes, rels = delete_abox_element(graph=graph, uuid="node-uuid")
+    assert nodes == 1
+    assert rels == 0
+    assert any("DETACH DELETE n" in q for q, _ in graph.calls)
