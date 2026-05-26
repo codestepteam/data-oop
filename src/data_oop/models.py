@@ -127,3 +127,47 @@ class ValidationReport:
             from .exceptions import TBoxValidationError
 
             raise TBoxValidationError(self)
+
+
+WorkflowAction = Literal["create_node", "create_relationship", "run_workflow"]
+WorkflowParameterType = Literal[
+    "string", "integer", "float", "boolean", "date", "datetime", "email", "url", "phone", "uuid", "array"
+]
+
+
+@dataclass(frozen=True)
+class WorkflowParameterDef:
+    name: str
+    type: WorkflowParameterType
+    array_item_type: str | None = None
+    array_item_class: str | None = None
+    required: bool = True
+    description: str | None = None
+
+
+@dataclass(frozen=True)
+class WorkflowStepDef:
+    step_id: str
+    action: WorkflowAction
+    class_name: str | None = None
+    properties: dict[str, Any] = field(default_factory=dict)
+    uuid: str | None = None
+    from_class: str | None = None
+    from_uuid: str | None = None
+    relationship_name: str | None = None
+    to_class: str | None = None
+    to_uuid: str | None = None
+    if_present: str | None = None
+    loop_over: str | None = None
+    loop_var: str | None = None
+    workflow_name: str | None = None
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class WorkflowDef:
+    name: str
+    steps: tuple[WorkflowStepDef, ...]
+    parameters: tuple[WorkflowParameterDef, ...] = ()
+    description: str | None = None
+    uuid: str | None = None

@@ -37,12 +37,13 @@ interface WorkflowTabProps {
   onUpdateStep: (idx: number, fields: any) => void;
   onAddParameter: (p: WorkflowParameter) => boolean;
   onRemoveParameter: (name: string) => void;
-  onSaveEditedParam: (idx: number, p: WorkflowParameter) => boolean;
+  onSaveEditedParam: (idx: number, p: WorkflowParameter) => boolean | Promise<boolean>;
   onLoadWorkflow: (wf: Workflow) => void;
   onSaveWorkflow: () => void;
   onRunWorkflow: () => void;
   onResetEditor: () => void;
-  generatePythonDSL: () => string;
+  dslCode: string;
+  parameterTypes: string[];
   openNodeSelector: (className: string, callback: (uuid: string) => void) => void;
 }
 
@@ -70,7 +71,8 @@ export function WorkflowTab({
   onSaveWorkflow,
   onRunWorkflow,
   onResetEditor,
-  generatePythonDSL,
+  dslCode,
+  parameterTypes,
   openNodeSelector
 }: WorkflowTabProps) {
   // Local state for add parameter form
@@ -264,9 +266,9 @@ export function WorkflowTab({
     setEditParamItemClass(p.array_item_class || (tbox.classes[0]?.name || ""));
   };
 
-  const handleSaveEditParam = (idx: number) => {
+  const handleSaveEditParam = async (idx: number) => {
     if (!editParamName) return;
-    const ok = onSaveEditedParam(idx, {
+    const ok = await onSaveEditedParam(idx, {
       name: editParamName,
       type: editParamType,
       required: editParamRequired,
@@ -523,7 +525,7 @@ export function WorkflowTab({
                   <span>Python DSL</span>
                 </div>
                 <div className="p-2 flex-1 overflow-y-auto bg-slate-950 font-mono text-[9px] leading-normal text-indigo-300">
-                  <pre className="whitespace-pre-wrap">{generatePythonDSL()}</pre>
+                  <pre className="whitespace-pre-wrap">{dslCode}</pre>
                 </div>
               </div>
               {/* JSON steps_json */}
@@ -615,17 +617,9 @@ export function WorkflowTab({
                                 value={editParamType}
                                 onChange={(e) => setEditParamType(e.target.value)}
                               >
-                                <option value="string">string</option>
-                                <option value="integer">integer</option>
-                                <option value="float">float</option>
-                                <option value="boolean">boolean</option>
-                                <option value="date">date</option>
-                                <option value="datetime">datetime</option>
-                                <option value="email">email</option>
-                                <option value="url">url</option>
-                                <option value="phone">phone</option>
-                                <option value="uuid">uuid</option>
-                                <option value="array">array</option>
+                                {parameterTypes.map(t => (
+                                  <option key={t} value={t}>{t}</option>
+                                ))}
                               </select>
                             </div>
                           </div>
@@ -748,17 +742,9 @@ export function WorkflowTab({
                   value={newParamType}
                   onChange={(e) => setNewParamType(e.target.value)}
                 >
-                  <option value="string">string</option>
-                  <option value="integer">integer</option>
-                  <option value="float">float</option>
-                  <option value="boolean">boolean</option>
-                  <option value="date">date</option>
-                  <option value="datetime">datetime</option>
-                  <option value="email">email</option>
-                  <option value="url">url</option>
-                  <option value="phone">phone</option>
-                  <option value="uuid">uuid</option>
-                  <option value="array">array</option>
+                  {parameterTypes.map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
                 </select>
               </div>
               {newParamType === "array" && (
@@ -924,7 +910,7 @@ export function WorkflowTab({
                             onChange={(e) => onUpdateStep(idx, { if_present: e.target.value || undefined })}
                           >
                             <option value="">Always Run</option>
-                            {editorParameters.filter(p => !p.required).map(p => (
+                            {editorParameters.map(p => (
                               <option key={p.name} value={p.name}>{p.name}</option>
                             ))}
                           </select>

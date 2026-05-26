@@ -78,7 +78,8 @@ export default function App() {
     loadWorkflowIntoEditor,
     handleSaveWorkflow,
     handleRunWorkflow,
-    generatePythonDSL,
+    dslCode,
+    parameterTypes,
     resetEditor,
   } = useWorkflow(tbox, fetchAboxData);
 
@@ -207,10 +208,11 @@ export default function App() {
             onRemoveParameter={removeParameter}
             onSaveEditedParam={saveEditedParam}
             onLoadWorkflow={loadWorkflowIntoEditor}
+            parameterTypes={parameterTypes}
             onSaveWorkflow={handleSaveWorkflow}
             onRunWorkflow={handleRunWorkflow}
             onResetEditor={resetEditor}
-            generatePythonDSL={generatePythonDSL}
+            dslCode={dslCode}
             openNodeSelector={openNodeSelector}
           />
         )}

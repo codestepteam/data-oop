@@ -482,3 +482,206 @@ def test_nested_workflow_rollback_on_failure(falkor_graph) -> None:
     ).result_set[0][0]
     assert prod_exists == 0
 
+
+def test_workflow_validation_and_dsl_generation() -> None:
+    from data_oop.models import WorkflowDef, WorkflowStepDef, WorkflowParameterDef
+    from data_oop.workflows import validate_workflow, generate_workflow_dsl, extract_parameters_from_steps
+    
+    # 1. Valid WorkflowDef
+    steps = (
+        WorkflowStepDef(
+            step_id="create_user",
+            action="create_node",
+            class_name="User",
+            properties={"name": "{user_name}"}
+        ),
+        WorkflowStepDef(
+            step_id="create_profile",
+            action="create_node",
+            class_name="Profile",
+            properties={"bio": "{bio_text}"},
+            if_present="bio_text"
+        ),
+        WorkflowStepDef(
+            step_id="link_user_profile",
+            action="create_relationship",
+            from_class="User",
+            from_uuid="{create_user.uuid}",
+            relationship_name="HAS_PROFILE",
+            to_class="Profile",
+            to_uuid="{create_profile.uuid}"
+        )
+    )
+    
+    params = (
+        WorkflowParameterDef(name="user_name", type="string"),
+        WorkflowParameterDef(name="bio_text", type="string", required=False),
+    )
+    
+    wf = WorkflowDef(
+        name="test_val_dsl",
+        steps=steps,
+        parameters=params,
+        description="Test validation and DSL"
+    )
+    
+    # Should not raise any ValueError
+    validate_workflow(wf)
+    
+    # DSL Generation
+    dsl = generate_workflow_dsl(wf)
+    assert "WorkflowBuilder(" in dsl
+    assert ".parameter(" in dsl
+    assert "create_node(" in dsl
+    assert "create_relationship(" in dsl
+    assert '"user_name": "YOUR_USER_NAME_VALUE"' in dsl
+
+    # 2. Parameter extraction
+    raw_steps = [
+        {
+            "step_id": "step_1",
+            "action": "create_node",
+            "class_name": "ClassA",
+            "properties": {"val": "{param_1}"}
+        },
+        {
+            "step_id": "step_2",
+            "action": "create_relationship",
+            "loop_over": "param_array",
+            "loop_var": "item",
+            "from_class": "ClassA",
+            "from_uuid": "{step_1.uuid}",
+            "relationship_name": "REL",
+            "to_class": "ClassB",
+            "to_uuid": "{item}"
+        },
+        {
+            "step_id": "step_3",
+            "action": "create_relationship",
+            "loop_over": "product_id",
+            "loop_var": "product_id",
+            "from_class": "Event",
+            "from_uuid": "{step_1.uuid}",
+            "relationship_name": "INCLUDES",
+            "to_class": "Product",
+            "to_uuid": "{product_id}",
+            "if_present": "product_id"
+        }
+    ]
+    extracted = extract_parameters_from_steps(raw_steps)
+    extracted_names = {p["name"] for p in extracted}
+    assert extracted_names == {"param_1", "param_array", "product_id"}
+    # Verify parameter type detection
+    param_types = {p["name"]: p["type"] for p in extracted}
+    assert param_types["param_1"] == "string"
+    assert param_types["param_array"] == "array"
+    assert param_types["product_id"] == "array"
+    
+    # Verify optional parameter detection via if_present
+    param_required = {p["name"]: p["required"] for p in extracted}
+    assert param_required["param_1"] is True
+    assert param_required["product_id"] is False
+
+    # 3. Invalid workflows
+    # Duplicate step_id
+    invalid_steps_1 = (
+        WorkflowStepDef(step_id="step_a", action="create_node", class_name="ClassA"),
+        WorkflowStepDef(step_id="step_a", action="create_node", class_name="ClassA"),
+    )
+    with pytest.raises(ValueError, match="Duplicate step_id"):
+        validate_workflow(WorkflowDef(name="invalid", steps=invalid_steps_1))
+
+    # Undefined variable reference
+    invalid_steps_2 = (
+        WorkflowStepDef(
+            step_id="step_a",
+            action="create_node",
+            class_name="ClassA",
+            properties={"name": "{undefined_param}"}
+        ),
+    )
+    with pytest.raises(ValueError, match="references undefined variable"):
+        validate_workflow(WorkflowDef(name="invalid", steps=invalid_steps_2))
+
+    # 4. Test WorkflowBuilder
+    from data_oop import WorkflowBuilder
+    
+    wf_builder = (
+        WorkflowBuilder("builder_test", description="Using builder pattern")
+        .parameter("param1", type="string")
+        .parameter("param2", type="array")
+        .create_node(
+            step_id="node_1",
+            class_name="User",
+            properties={"name": "{param1}"}
+        )
+        .create_relationship(
+            step_id="node_2",
+            relationship_name="FOLLOWS",
+            from_class="User",
+            from_uuid="{node_1.uuid}",
+            to_class="User",
+            to_uuid="{item}"
+        )
+        .loop_over("param2", loop_var="item")
+    )
+    
+    wf_from_builder = wf_builder.build()
+    
+    assert wf_from_builder.name == "builder_test"
+    assert len(wf_from_builder.parameters) == 2
+    assert wf_from_builder.parameters[0].name == "param1"
+    assert wf_from_builder.parameters[1].type == "array"
+    assert len(wf_from_builder.steps) == 2
+    assert wf_from_builder.steps[1].loop_over == "param2"
+    assert wf_from_builder.steps[1].loop_var == "item"
+
+
+def test_workflow_parameter_value_validation() -> None:
+    from data_oop.models import WorkflowParameterDef
+    from data_oop.workflows import validate_workflow_parameter_values
+
+    valid_uuid = str(uuid.uuid4())
+    params = (
+        WorkflowParameterDef(name="id", type="uuid"),
+        WorkflowParameterDef(name="start_date", type="date"),
+        WorkflowParameterDef(name="created_at", type="datetime"),
+        WorkflowParameterDef(name="count", type="integer"),
+        WorkflowParameterDef(name="score", type="float"),
+        WorkflowParameterDef(name="enabled", type="boolean"),
+        WorkflowParameterDef(name="email", type="email"),
+        WorkflowParameterDef(name="url", type="url"),
+        WorkflowParameterDef(name="phone", type="phone"),
+        WorkflowParameterDef(name="ids", type="array", array_item_type="uuid"),
+        WorkflowParameterDef(name="optional_note", type="string", required=False),
+    )
+
+    normalized = validate_workflow_parameter_values(params, {
+        "id": valid_uuid.upper(),
+        "start_date": "2026-05-26",
+        "created_at": "2026-05-26T12:34:56Z",
+        "count": "12",
+        "score": "3.14",
+        "enabled": "true",
+        "email": "user@example.com",
+        "url": "https://example.com/path",
+        "phone": "+1 555 123 4567",
+        "ids": f'["{valid_uuid}"]',
+    })
+
+    assert normalized["id"] == valid_uuid
+    assert normalized["start_date"] == "2026-05-26"
+    assert normalized["created_at"] == "2026-05-26T12:34:56+00:00"
+    assert normalized["count"] == 12
+    assert normalized["score"] == 3.14
+    assert normalized["enabled"] is True
+    assert normalized["ids"] == [valid_uuid]
+    assert "optional_note" not in normalized
+
+    with pytest.raises(ValueError, match="must be UUID"):
+        validate_workflow_parameter_values((WorkflowParameterDef(name="id", type="uuid"),), {"id": "bad"})
+    with pytest.raises(ValueError, match="ISO date"):
+        validate_workflow_parameter_values((WorkflowParameterDef(name="d", type="date"),), {"d": "05/26/2026"})
+    with pytest.raises(ValueError, match="Missing required"):
+        validate_workflow_parameter_values((WorkflowParameterDef(name="required", type="string"),), {})
+

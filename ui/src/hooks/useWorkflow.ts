@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { Workflow, WorkflowStep, WorkflowParameter, TBoxClass, TBoxRelationship } from "../types";
 
 export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRelationship[] }, onWorkflowRunSuccess?: () => void) {
@@ -16,6 +16,74 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
   const [runParams, setRunParams] = useState<Record<string, string>>({});
   const [runResult, setRunResult] = useState<any | null>(null);
   const [running, setRunning] = useState(false);
+
+  // DSL states
+  const [dslCode, setDslCode] = useState("");
+  const [generatingDsl, setGeneratingDsl] = useState(false);
+
+  const fetchDslPreview = useCallback(async (
+    name: string,
+    steps: WorkflowStep[],
+    parameters: WorkflowParameter[],
+    desc: string
+  ) => {
+    if (!name) {
+      setDslCode("# Name your workflow to generate code");
+      return;
+    }
+    setGeneratingDsl(true);
+    try {
+      const res = await fetch("/api/workflows/dsl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          steps,
+          parameters,
+          description: desc
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDslCode(data.dsl);
+      } else {
+        const errData = await res.json();
+        setDslCode(`# Error generating DSL:\n# ${errData.detail || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      setDslCode(`# Error generating DSL:\n# ${err}`);
+    } finally {
+      setGeneratingDsl(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchDslPreview(editorName, editorSteps, editorParameters, editorDesc);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [editorName, editorSteps, editorParameters, editorDesc, fetchDslPreview]);
+
+  // Parameter types state from backend
+  const [parameterTypes, setParameterTypes] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch("/api/workflows/parameter-types")
+      .then(res => res.json())
+      .then(data => setParameterTypes(data))
+      .catch(err => console.error("Error fetching parameter types", err));
+  }, []);
+
+  useEffect(() => {
+    setRunParams(prev => {
+      const updated: Record<string, string> = {};
+      editorParameters.forEach(p => {
+        updated[p.name] = prev[p.name] || "";
+      });
+      return updated;
+    });
+  }, [editorParameters]);
 
   const fetchWorkflows = useCallback(async () => {
     setLoadingWorkflows(true);
@@ -81,6 +149,48 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
     );
   }, []);
 
+  const persistWorkflow = useCallback(async (parametersToSave: WorkflowParameter[], showAlert = true) => {
+    if (!editorName) {
+      if (showAlert) alert("Workflow name is required");
+      return false;
+    }
+    try {
+      const payload = {
+        name: editorName,
+        description: editorDesc,
+        steps: editorSteps,
+        parameters: parametersToSave,
+      };
+      const res = await fetch("/api/workflows", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(`Workflow save failed: ${data.detail || res.statusText}`);
+        return false;
+      }
+      setSelectedWorkflow(prev => {
+        if (prev && prev.name !== editorName) return prev;
+        return {
+          ...(prev || {}),
+          name: editorName,
+          description: editorDesc,
+          steps: editorSteps,
+          parameters: parametersToSave,
+        } as Workflow;
+      });
+      await fetchWorkflows();
+      if (showAlert) alert("Workflow saved successfully!");
+      return true;
+    } catch (err) {
+      console.error(err);
+      alert(`Workflow save failed: ${err}`);
+      return false;
+    }
+  }, [editorName, editorDesc, editorSteps, fetchWorkflows]);
+
   const addParameter = useCallback((newParam: WorkflowParameter) => {
     if (editorParameters.some(p => p.name === newParam.name)) {
       alert("Parameter already exists");
@@ -94,18 +204,17 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
     setEditorParameters(params => params.filter(p => p.name !== name));
   }, []);
 
-  const saveEditedParam = useCallback((idx: number, updatedParam: WorkflowParameter) => {
+  const saveEditedParam = useCallback(async (idx: number, updatedParam: WorkflowParameter) => {
     if (editorParameters.some((p, i) => i !== idx && p.name === updatedParam.name)) {
       alert("Parameter already exists");
       return false;
     }
-    setEditorParameters(params => {
-      const updated = [...params];
-      updated[idx] = updatedParam;
-      return updated;
-    });
-    return true;
-  }, [editorParameters]);
+    const updated = [...editorParameters];
+    updated[idx] = updatedParam;
+    setEditorParameters(updated);
+    if (!editorName) return true;
+    return persistWorkflow(updated, false);
+  }, [editorParameters, editorName, persistWorkflow]);
 
   const loadWorkflowIntoEditor = useCallback((wf: Workflow) => {
     setEditorName(wf.name);
@@ -113,48 +222,12 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
     setEditorSteps(wf.steps);
     setEditorParameters(wf.parameters || []);
     setSelectedWorkflow(wf);
-
-    const params: Record<string, string> = {};
-    if (wf.parameters && wf.parameters.length > 0) {
-      wf.parameters.forEach((p) => {
-        params[p.name] = "";
-      });
-    } else {
-      const stepStr = JSON.stringify(wf.steps);
-      const regex = /\{([^}]+)\}/g;
-      let match;
-      while ((match = regex.exec(stepStr)) !== null) {
-        const path = match[1];
-        if (!path.includes(".")) {
-          params[path] = "";
-        }
-      }
-    }
-    setRunParams(params);
     setRunResult(null);
   }, []);
 
   const handleSaveWorkflow = useCallback(async () => {
-    if (!editorName) return alert("Workflow name is required");
-    try {
-      const res = await fetch("/api/workflows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: editorName,
-          description: editorDesc,
-          steps: editorSteps,
-          parameters: editorParameters,
-        }),
-      });
-      if (res.ok) {
-        alert("Workflow saved successfully!");
-        await fetchWorkflows();
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  }, [editorName, editorDesc, editorSteps, editorParameters, fetchWorkflows]);
+    await persistWorkflow(editorParameters, true);
+  }, [editorParameters, persistWorkflow]);
 
   const handleRunWorkflow = useCallback(async () => {
     if (!selectedWorkflow) return;
@@ -163,7 +236,8 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
 
     // Parse array parameters from JSON strings to real arrays
     const parsedParams = { ...runParams };
-    selectedWorkflow.parameters?.forEach(p => {
+    const parameterDefs = editorParameters.length > 0 ? editorParameters : (selectedWorkflow.parameters || []);
+    parameterDefs.forEach(p => {
       if (p.type === "array") {
         try {
           const val = runParams[p.name];
@@ -194,98 +268,6 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
       setRunning(false);
     }
   }, [selectedWorkflow, runParams, onWorkflowRunSuccess]);
-
-  const generatePythonDSL = useCallback(() => {
-    if (!editorName) return "# Name your workflow to generate code";
-    let codeStr = `from data_oop import connect_and_load_tbox_to_falkor, save_workflow, run_workflow
-from falkordb import FalkorDB
-
-# 1. Connect to FalkorDB
-db = FalkorDB(host="localhost", port=6380)
-graph = db.select_graph("data_oop")
-
-# 2. Define Workflow Steps
-steps = [\n`;
-
-    editorSteps.forEach((step) => {
-      codeStr += `    {\n`;
-      codeStr += `        "step_id": "${step.step_id}",\n`;
-      codeStr += `        "action": "${step.action}",\n`;
-      if (step.action === "create_node") {
-        codeStr += `        "class_name": "${step.class_name}",\n`;
-        codeStr += `        "properties": {\n`;
-        if (step.properties) {
-          Object.entries(step.properties).forEach(([k, v]) => {
-            codeStr += `            "${k}": "${v}",\n`;
-          });
-        }
-        codeStr += `        }\n`;
-      } else {
-        codeStr += `        "from_class": "${step.from_class}",\n`;
-        codeStr += `        "from_uuid": "${step.from_uuid}",\n`;
-        codeStr += `        "relationship_name": "${step.relationship_name}",\n`;
-        codeStr += `        "to_class": "${step.to_class}",\n`;
-        codeStr += `        "to_uuid": "${step.to_uuid}"\n`;
-      }
-      if (step.if_present) {
-        codeStr += `        "if_present": "${step.if_present}",\n`;
-      }
-      if (step.loop_over) {
-        codeStr += `        "loop_over": "${step.loop_over}",\n`;
-        codeStr += `        "loop_var": "${step.loop_var || "item"}",\n`;
-      }
-      codeStr += `    },\n`;
-    });
-
-    codeStr += `]
-
-# 3. Parameters Definition
-parameters = [\n`;
-    editorParameters.forEach(p => {
-      codeStr += `    { "name": "${p.name}", "type": "${p.type}", "required": ${p.required ? 'True' : 'False'}, "description": "${p.description}" },\n`;
-    });
-    codeStr += `]
-
-# 4. Save Workflow to DB
-save_workflow(
-    graph=graph,
-    name="${editorName}",
-    steps=steps,
-    parameters=parameters,
-    description="${editorDesc || ''}"
-)
-
-# 5. Execute Workflow
-results = run_workflow(
-    graph=graph,
-    name="${editorName}",
-    parameters={
-`;
-    const paramsList: string[] = [];
-    if (editorParameters.length > 0) {
-      editorParameters.forEach(p => paramsList.push(p.name));
-    } else {
-      const stepStr = JSON.stringify(editorSteps);
-      const regex = /\{([^}]+)\}/g;
-      let match;
-      while ((match = regex.exec(stepStr)) !== null) {
-        const path = match[1];
-        if (!path.includes(".") && !paramsList.includes(path)) {
-          paramsList.push(path);
-        }
-      }
-    }
-    
-    paramsList.forEach(p => {
-      codeStr += `        "${p}": "YOUR_${p.toUpperCase()}_VALUE",\n`;
-    });
-
-    codeStr += `    }
-)
-print("Execution Results:", results)
-`;
-    return codeStr;
-  }, [editorName, editorDesc, editorSteps, editorParameters]);
 
   const resetEditor = useCallback(() => {
     setEditorName("");
@@ -323,7 +305,9 @@ print("Execution Results:", results)
     loadWorkflowIntoEditor,
     handleSaveWorkflow,
     handleRunWorkflow,
-    generatePythonDSL,
+    dslCode,
+    generatingDsl,
+    parameterTypes,
     resetEditor,
   };
 }

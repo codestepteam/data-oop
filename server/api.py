@@ -69,9 +69,18 @@ class RelationshipCreate(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class WorkflowParameter(BaseModel):
+    name: str
+    type: str  # "string", "integer", "boolean", "uuid", "array"
+    array_item_type: Optional[str] = None
+    array_item_class: Optional[str] = None
+    required: bool = True
+    description: Optional[str] = None
+
+
 class WorkflowStep(BaseModel):
     step_id: str
-    action: str  # "create_node" or "create_relationship"
+    action: str  # "create_node", "create_relationship", "run_workflow"
     class_name: Optional[str] = None
     properties: Optional[Dict[str, Any]] = None
     uuid: Optional[str] = None
@@ -80,17 +89,26 @@ class WorkflowStep(BaseModel):
     relationship_name: Optional[str] = None
     to_class: Optional[str] = None
     to_uuid: Optional[str] = None
+    if_present: Optional[str] = None
+    loop_over: Optional[str] = None
+    loop_var: Optional[str] = None
+    workflow_name: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
 
 
 class WorkflowCreate(BaseModel):
     name: str
-    steps: List[dict]
-    parameters: Optional[List[dict]] = None
+    steps: List[WorkflowStep]
+    parameters: Optional[List[WorkflowParameter]] = None
     description: Optional[str] = None
 
 
 class WorkflowRun(BaseModel):
     parameters: Dict[str, Any]
+
+
+class ParseParametersRequest(BaseModel):
+    steps: List[WorkflowStep]
 
 
 # Endpoints
@@ -274,6 +292,13 @@ def create_relationship(data: RelationshipCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/workflows/parameter-types")
+def get_workflow_parameter_types():
+    from typing import get_args
+    from data_oop.models import WorkflowParameterType
+    return list(get_args(WorkflowParameterType))
+
+
 @app.get("/api/workflows")
 def list_workflows():
     try:
@@ -309,14 +334,96 @@ def list_workflows():
 def create_workflow(data: WorkflowCreate):
     try:
         graph = get_graph()
+        steps_dict = [step.dict(exclude_none=True) for step in data.steps]
+        params_dict = None
+        if data.parameters is not None:
+            params_dict = [p.dict(exclude_none=True) for p in data.parameters]
+            
         res = save_workflow(
             graph=graph,
             name=data.name,
-            steps=data.steps,
-            parameters=data.parameters,
+            steps=steps_dict,
+            parameters=params_dict,
             description=data.description
         )
         return {"status": "success", "uuid": res.uuid}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/workflows/parse-parameters")
+def parse_workflow_parameters(data: ParseParametersRequest):
+    try:
+        from data_oop.workflows import extract_parameters_from_steps
+        steps_dict = [step.dict(exclude_none=True) for step in data.steps]
+        extracted = extract_parameters_from_steps(steps_dict)
+        return extracted
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/workflows/dsl")
+def preview_workflow_dsl(data: WorkflowCreate):
+    try:
+        from data_oop.workflows import generate_workflow_dsl, extract_parameters_from_steps
+        from data_oop.models import WorkflowDef, WorkflowStepDef, WorkflowParameterDef
+        
+        step_defs = []
+        for step in data.steps:
+            step_defs.append(WorkflowStepDef(
+                step_id=step.step_id,
+                action=step.action,  # type: ignore
+                class_name=step.class_name,
+                properties=step.properties or {},
+                uuid=step.uuid,
+                from_class=step.from_class,
+                from_uuid=step.from_uuid,
+                relationship_name=step.relationship_name,
+                to_class=step.to_class,
+                to_uuid=step.to_uuid,
+                if_present=step.if_present,
+                loop_over=step.loop_over,
+                loop_var=step.loop_var,
+                workflow_name=step.workflow_name,
+                parameters=step.parameters or {},
+            ))
+            
+        if data.parameters is None:
+            extracted = extract_parameters_from_steps(step_defs)
+            param_defs = [
+                WorkflowParameterDef(
+                    name=p["name"],
+                    type=p["type"],
+                    required=p["required"],
+                    description=p["description"]
+                )
+                for p in extracted
+            ]
+        else:
+            param_defs = []
+            for p in data.parameters:
+                param_defs.append(WorkflowParameterDef(
+                    name=p.name,
+                    type=p.type,
+                    array_item_type=p.array_item_type,
+                    array_item_class=p.array_item_class,
+                    required=p.required,
+                    description=p.description,
+                ))
+                
+        workflow = WorkflowDef(
+            name=data.name,
+            steps=tuple(step_defs),
+            parameters=tuple(param_defs),
+            description=data.description,
+        )
+        
+        dsl = generate_workflow_dsl(workflow)
+        return {"status": "success", "dsl": dsl}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -331,6 +438,8 @@ def execute_workflow(name: str, data: WorkflowRun):
             parameters=data.parameters,
         )
         return {"status": "success", "results": results}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
