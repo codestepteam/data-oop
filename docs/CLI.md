@@ -1,197 +1,128 @@
-# data-oop CLI Usage Guide
+# FalkorDB 기반 지식그래프 운영 CLI 베스트 프랙티스 가이드
 
-The `data-oop` command-line utility provides tools to manage, inspect, validate, and run workflows in FalkorDB.
-
----
-
-## 1. Installation & Execution
-
-### Running locally (using `uv`)
-
-No installation required. Run directly from the project directory:
-
-```bash
-uv run data-oop --help
-```
-
-### Global Installation
-
-Install the tool globally on your system path:
-
-```bash
-uv tool install .
-```
-
-After installation, the command `data-oop` will be globally available.
+이 가이드는 `data-oop` CLI 유틸리티를 사용하여 FalkorDB 상에서 TBox(온톨로지 스키마)를 정의하고, ABox(실제 인스턴스 데이터)를 적재하며, 데이터의 무결성을 검증하고 스키마를 점진적으로 업데이트해 나가는 **실전 워크플로우와 베스트 프랙티스**를 다룹니다.
 
 ---
 
-## 2. Configuration (Environment Variables & Flags)
+## 0. 연결 및 환경 설정
 
-Connection parameters can be set via command-line flags or environment variables:
-
-| Flag         | Environment Variable | Default     | Description           |
-| ------------ | -------------------- | ----------- | --------------------- |
-| `--host`     | `FALKOR_HOST`        | `localhost` | FalkorDB host address |
-| `--port`     | `FALKOR_PORT`        | `6380`      | FalkorDB port         |
-| `--graph`    | `FALKOR_GRAPH`       | `data_oop`  | Database graph name   |
-| `--username` | `FALKOR_USERNAME`    | _None_      | FalkorDB username     |
-| `--password` | `FALKOR_PASSWORD`    | _None_      | FalkorDB password     |
-
-Example with environment variables:
+CLI 실행 시 데이터베이스 접속 플래그를 매번 입력하는 대신, 환경 변수를 활용하여 세션을 고정하는 것을 권장합니다.
 
 ```bash
-FALKOR_HOST="macmini" FALKOR_PORT=6380 data-oop inspect
+# 로컬 개발 환경용 터미널 세션 설정
+export FALKOR_HOST="localhost"
+export FALKOR_PORT=6380
+export FALKOR_GRAPH="commerce_data"
+
+# 설정 작동 여부 확인 (도움말 출력)
+data-oop --help
 ```
 
 ---
 
-## 3. Command Reference
+## 1단계: TBox 설계 및 반영 (온톨로지 정의)
 
-### A. `inspect`
+지식그래프의 뼈대인 클래스(Class), 속성(Property), 제약 조건(Constraints), 관계(Relationship)를 점진적으로 선언합니다.
 
-Displays TBox definition details (Classes, Properties, Relationships) and list of stored Workflows.
+### 1. 핵심 클래스 선언
+도메인의 주요 엔티티 단위를 정의합니다. (예: 부서와 프로젝트)
+```bash
+data-oop tbox-create-class --class-name Department --description "회사 부서 정보"
+data-oop tbox-create-class --class-name Project --description "부서 프로젝트 정보"
+```
 
+### 2. 속성 생성 및 제약 조건 바인딩
+클래스가 가질 수 있는 속성을 정의하고 제약 조건(필수 여부, 고유값 여부, null 허용 여부)을 바인딩합니다.
+```bash
+# 속성 원형 생성
+data-oop tbox-create-property --name name --datatype string --description "이름"
+data-oop tbox-create-property --name code --datatype string --description "고유 코드"
+data-oop tbox-create-property --name budget --datatype integer --description "프로젝트 예산"
+
+# Department 클래스에 속성 바인딩 (name과 code는 필수적이고 유니크해야 함)
+data-oop tbox-attach-property --class-name Department --property name --required --unique
+data-oop tbox-attach-property --class-name Department --property code --required --unique
+
+# Project 클래스에 속성 바인딩 (budget은 null 가능 및 기본값 0 설정)
+data-oop tbox-attach-property --class-name Project --property name --required
+data-oop tbox-attach-property --class-name Project --property budget --nullable true --default 0
+```
+
+### 3. 관계(Relationship) 정의
+클래스와 클래스 간의 연결 규칙을 선언합니다. 
+```bash
+# Department가 Project를 'RUNS' 관계로 연결하며, 관계 식별 ID는 자동 생성함
+data-oop tbox-define-relationship --name RUNS --from-class Department --to-class Project --required
+```
+
+### 4. 스키마 검사
+현재 적용된 TBox 메타데이터가 설계와 일치하는지 한눈에 검사합니다.
 ```bash
 data-oop inspect
 ```
 
-### B. `validate`
+---
 
-Validates ABox node instances against the current TBox schema. Prints list of issues and exits with code `1` if validation errors exist.
+## 2단계: ABox 데이터 입력 및 적재 (지식 채우기)
 
+TBox 규격이 완성되면, 이에 부합하는 실제 데이터 노드와 엣지를 생성합니다. **모든 노드와 엣지는 `uuid`를 가집니다.**
+
+### 1. 인스턴스 노드 생성 (Upsert)
+속성값은 올바른 데이터 타입 형식의 JSON 문자열로 전달합니다.
 ```bash
-# Run validation
-data-oop validate
+# IT 부서 생성
+data-oop abox-upsert-node --class-name Department --uuid dept-it-01 --properties '{"name": "IT Support", "code": "IT01"}'
 
-# Run validation with a custom run ID
-data-oop validate --run-id custom-validation-run
+# 클라우드 마이그레이션 프로젝트 생성 (TBox 기본값에 의해 budget은 0으로 자동 지정됨)
+data-oop abox-upsert-node --class-name Project --uuid proj-cloud-01 --properties '{"name": "Cloud Migration"}'
 ```
 
-### C. `clear-abox`
-
-Wipes all ABox instance nodes (domain data) from the graph, keeping TBox and validation schemas intact.
-
+### 2. 노드 간 엣지 연결 (Upsert)
+노드 생성 후, TBox 관계 규칙(`RUNS`)에 따라 관계선을 연결합니다.
 ```bash
-# Interactive prompt
-data-oop clear-abox
-
-# Force clear without interactive prompt (useful for automation)
-data-oop clear-abox --yes
-```
-
-### D. `run-workflow`
-
-Executes a stored workflow by name, using provided parameters.
-
-```bash
-# Run with inline JSON parameters
-data-oop run-workflow --name add_new_product --params '{"product_name": "Keyboard", "price": 45000}'
-
-# Run with parameters loaded from a JSON file
-data-oop run-workflow --name add_new_product --params-file params.json
-```
-
-### E. `tbox-create-class`
-
-Creates a ClassDef in the TBox graph directly from command arguments.
-```bash
-data-oop tbox-create-class --class-name Department --description "Department info" --metadata '{"domain": "commerce"}'
-```
-
-### F. `tbox-create-property`
-
-Creates a PropertyDef in the TBox graph directly from command arguments.
-```bash
-data-oop tbox-create-property --name code --datatype string --description "Unique code"
-```
-
-### G. `tbox-attach-property`
-
-Attaches a PropertyDef to a ClassDef with required/unique constraints.
-```bash
-data-oop tbox-attach-property --class-name Department --property code --required --unique --default '"IT-00"'
-```
-
-### H. `tbox-define-relationship`
-
-Defines a RelationshipDef link schema between two Classes in the TBox graph.
-```bash
-data-oop tbox-define-relationship --id rel_dept_runs_project --name RUNS --from-class Department --to-class Project --required
-```
-
-### I. `tbox-delete-class`
-
-Deletes a ClassDef from the TBox schema.
-```bash
-# Delete class (fails if it has attached properties/relationships, unless --detach is passed)
-data-oop tbox-delete-class --class-name Department
-
-# Force delete and detach relationships/properties
-data-oop tbox-delete-class --class-name Department --detach
-```
-
-### J. `tbox-delete-property`
-
-Deletes a PropertyDef definition from the TBox schema.
-```bash
-data-oop tbox-delete-property --name code --detach
-```
-
-### K. `tbox-detach-property`
-
-Detaches a PropertyDef binding from a specific ClassDef without deleting the property definition itself.
-```bash
-data-oop tbox-detach-property --class-name Department --property code
-```
-
-### L. `tbox-delete-relationship`
-
-Deletes a RelationshipDef schema from the TBox.
-```bash
-data-oop tbox-delete-relationship --id rel_dept_runs_project
-```
-
-### M. `abox-upsert-node`
-
-Creates or updates a single ABox node instance directly without using workflow templates.
-```bash
-data-oop abox-upsert-node --class-name Department --uuid dept-it-01 --properties '{"name": "IT Department", "code": "IT-01"}'
-```
-
-### N. `abox-upsert-relationship`
-
-Creates or updates a single ABox relationship link directly between two nodes without workflows.
-```bash
-data-oop abox-upsert-relationship --from-class Department --from-uuid dept-it-01 --name RUNS --to-class Project --to-uuid proj-cloud-migration --properties '{"since": "2026-05-26"}'
-```
-
-### O. `abox-delete`
-
-Deletes a single ABox node instance (and detaches its relationships) or a single relationship edge by its UUID.
-```bash
-# Delete a node by UUID
-data-oop abox-delete --uuid dept-it-01
-
-# Delete a relationship edge by its generated edge UUID (format: from_uuid:relationship_name:to_uuid)
-data-oop abox-delete --uuid dept-it-01:RUNS:proj-cloud-migration
+data-oop abox-upsert-relationship --from-class Department --from-uuid dept-it-01 --name RUNS --to-class Project --to-uuid proj-cloud-01
 ```
 
 ---
 
-## 4. CI/CD Integration
+## 3단계: 지식그래프 무결성 검증 (ABox Validation)
 
-To automatically validate data integrity in a CI pipeline (e.g., GitHub Actions):
+적재된 데이터가 TBox 스키마가 규정한 필수값, 유니크값, 엣지 카디널리티 제약 사항을 준수하고 있는지 검증을 실행합니다.
 
-```yaml
-- name: Run Schema Validation
-  env:
-    FALKOR_HOST: ${{ secrets.DB_HOST }}
-    FALKOR_PORT: 6380
-    FALKOR_GRAPH: production
-  run: |
-    pip install data-oop
-    data-oop validate
+```bash
+data-oop validate
+```
+- 검증에 실패하면 오류 원인과Violating Node의 `uuid`를 출력하고 종료 코드 `1`을 반환합니다.
+- 이는 배포 파이프라인(CI/CD) 등에서 데이터 정합성 차단기로 사용할 수 있습니다.
+
+---
+
+## 4단계: 스키마 및 데이터 점진적 업데이트
+
+지식그래프 요구사항이 바뀜에 따라 스키마와 인스턴스를 동적으로 관리 및 변경해 나갑니다.
+
+### 1. 데이터 삭제 (Unified Deletion)
+인스턴스 노드나 관계선은 모두 `uuid`를 갖습니다. 동일한 하나의 명령어로 노드와 엣지 모두 삭제 가능합니다.
+```bash
+# 특정 프로젝트 노드 삭제 (연결된 관계선도 자동 분리 삭제됨)
+data-oop abox-delete --uuid proj-cloud-01
+
+# 부서와 프로젝트 간의 RUNS 관계선만 조준 삭제 (관계 UUID: 출발UUID:관계명:도착UUID)
+data-oop abox-delete --uuid dept-it-01:RUNS:proj-cloud-01
 ```
 
-If validation fails, the command exits with code `1`, causing the pipeline stage to fail.
+### 2. 스키마 해제 및 수정
+TBox 스키마를 점진적으로 구조조정(Evolution)할 때 사용합니다.
+```bash
+# 클래스에서 속성 바인딩만 제거 (속성 정의 자체는 보존)
+data-oop tbox-detach-property --class-name Project --property budget
+
+# TBox 클래스 정의를 완전히 삭제 (관련 관계나 속성 바인딩이 있으면 --detach 플래그 동반 필요)
+data-oop tbox-delete-class --class-name Project --detach
+```
+
+### 3. 전체 데이터 초기화 (ABox Clear)
+스키마(TBox) 설계는 유지하되, 적재된 테스트 데이터(ABox)만 깨끗이 밀고 다시 시작하고 싶을 때 실행합니다.
+```bash
+data-oop clear-abox --yes
+```
