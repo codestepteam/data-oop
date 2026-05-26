@@ -685,3 +685,117 @@ def test_workflow_parameter_value_validation() -> None:
     with pytest.raises(ValueError, match="Missing required"):
         validate_workflow_parameter_values((WorkflowParameterDef(name="required", type="string"),), {})
 
+    # Float validation edge cases
+    assert validate_workflow_parameter_values((WorkflowParameterDef(name="f", type="float"),), {"f": 12})["f"] == 12.0
+    with pytest.raises(ValueError, match="must be float"):
+        validate_workflow_parameter_values((WorkflowParameterDef(name="f", type="float"),), {"f": True})
+    with pytest.raises(ValueError, match="must be float"):
+        validate_workflow_parameter_values((WorkflowParameterDef(name="f", type="float"),), {"f": "not-a-number"})
+
+    # Boolean validation edge cases
+    assert validate_workflow_parameter_values((WorkflowParameterDef(name="b", type="boolean"),), {"b": "yes"})["b"] is True
+    assert validate_workflow_parameter_values((WorkflowParameterDef(name="b", type="boolean"),), {"b": "off"})["b"] is False
+    with pytest.raises(ValueError, match="must be boolean"):
+        validate_workflow_parameter_values((WorkflowParameterDef(name="b", type="boolean"),), {"b": "maybe"})
+
+    # Integer edge cases
+    with pytest.raises(ValueError, match="must be integer"):
+        validate_workflow_parameter_values((WorkflowParameterDef(name="i", type="integer"),), {"i": "12.3"})
+    with pytest.raises(ValueError, match="must be integer"):
+        validate_workflow_parameter_values((WorkflowParameterDef(name="i", type="integer"),), {"i": True})
+
+    # Array edge cases
+    with pytest.raises(ValueError, match="must be array"):
+        validate_workflow_parameter_values((WorkflowParameterDef(name="a", type="array"),), {"a": "invalid-json{"})
+    with pytest.raises(ValueError, match="must be array"):
+        validate_workflow_parameter_values((WorkflowParameterDef(name="a", type="array"),), {"a": 123})
+
+
+def test_circular_and_forward_references_validation() -> None:
+    from data_oop.models import WorkflowDef, WorkflowStepDef
+    from data_oop.workflows import validate_workflow
+
+    # 1. Forward reference (step_1 references step_2 which is defined later)
+    forward_steps = (
+        WorkflowStepDef(
+            step_id="step_1",
+            action="create_node",
+            class_name="User",
+            properties={"name": "{step_2.uuid}"}
+        ),
+        WorkflowStepDef(
+            step_id="step_2",
+            action="create_node",
+            class_name="User",
+            properties={"name": "Alice"}
+        ),
+    )
+    with pytest.raises(ValueError, match="references undefined variable: 'step_2'"):
+        validate_workflow(WorkflowDef(name="forward_ref", steps=forward_steps))
+
+    # 2. Circular reference (step_1 -> step_2 -> step_1)
+    circular_steps = (
+        WorkflowStepDef(
+            step_id="step_1",
+            action="create_node",
+            class_name="User",
+            properties={"name": "{step_2.uuid}"}
+        ),
+        WorkflowStepDef(
+            step_id="step_2",
+            action="create_node",
+            class_name="User",
+            properties={"name": "{step_1.uuid}"}
+        ),
+    )
+    with pytest.raises(ValueError, match="references undefined variable: 'step_2'"):
+        validate_workflow(WorkflowDef(name="circular_ref", steps=circular_steps))
+
+
+def test_rollback_continues_on_individual_rollback_failure(falkor_graph, monkeypatch) -> None:
+    from data_oop.workflows import run_workflow, save_workflow
+    import data_oop.workflows
+    
+    rollback_calls = []
+    original_rollback = data_oop.workflows._execute_rollback_item
+    
+    def mock_rollback(graph, item):
+        rollback_calls.append(item)
+        if item.get("uuid") == "fail_uuid":
+            raise Exception("Simulated Rollback Query Failure")
+        original_rollback(graph, item)
+        
+    monkeypatch.setattr(data_oop.workflows, "_execute_rollback_item", mock_rollback)
+    
+    steps = [
+        {
+            "step_id": "step_1",
+            "action": "create_node",
+            "class_name": "Product",
+            "uuid": "fail_uuid",
+            "properties": {"name": "P1"}
+        },
+        {
+            "step_id": "step_2",
+            "action": "create_node",
+            "class_name": "Product",
+            "uuid": "success_uuid",
+            "properties": {"name": "P2"}
+        },
+        {
+            "step_id": "step_3",
+            "action": "create_node",
+            "class_name": "NonExistentClassSpecFail",
+            "properties": {}
+        }
+    ]
+    
+    save_workflow(graph=falkor_graph, name="rollback_fail_test", steps=steps)
+    
+    with pytest.raises(ValueError):
+        run_workflow(graph=falkor_graph, name="rollback_fail_test", parameters={})
+        
+    assert len(rollback_calls) == 2
+    uuids_rolled_back = {item.get("uuid") for item in rollback_calls}
+    assert uuids_rolled_back == {"success_uuid", "fail_uuid"}
+
