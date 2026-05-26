@@ -120,21 +120,53 @@ Defines a RelationshipDef link schema between two Classes in the TBox graph.
 data-oop tbox-define-relationship --id rel_dept_runs_project --name RUNS --from-class Department --to-class Project --required
 ```
 
-### I. `abox-upsert-node`
+### I. `tbox-delete-class`
+
+Deletes a ClassDef from the TBox schema.
+```bash
+# Delete class (fails if it has attached properties/relationships, unless --detach is passed)
+data-oop tbox-delete-class --class-name Department
+
+# Force delete and detach relationships/properties
+data-oop tbox-delete-class --class-name Department --detach
+```
+
+### J. `tbox-delete-property`
+
+Deletes a PropertyDef definition from the TBox schema.
+```bash
+data-oop tbox-delete-property --name code --detach
+```
+
+### K. `tbox-detach-property`
+
+Detaches a PropertyDef binding from a specific ClassDef without deleting the property definition itself.
+```bash
+data-oop tbox-detach-property --class-name Department --property code
+```
+
+### L. `tbox-delete-relationship`
+
+Deletes a RelationshipDef schema from the TBox.
+```bash
+data-oop tbox-delete-relationship --id rel_dept_runs_project
+```
+
+### M. `abox-upsert-node`
 
 Creates or updates a single ABox node instance directly without using workflow templates.
 ```bash
 data-oop abox-upsert-node --class-name Department --uuid dept-it-01 --properties '{"name": "IT Department", "code": "IT-01"}'
 ```
 
-### J. `abox-upsert-relationship`
+### N. `abox-upsert-relationship`
 
 Creates or updates a single ABox relationship link directly between two nodes without workflows.
 ```bash
 data-oop abox-upsert-relationship --from-class Department --from-uuid dept-it-01 --name RUNS --to-class Project --to-uuid proj-cloud-migration --properties '{"since": "2026-05-26"}'
 ```
 
-### K. `abox-delete`
+### O. `abox-delete`
 
 Deletes a single ABox node instance (and detaches its relationships) or a single relationship edge by its UUID.
 ```bash

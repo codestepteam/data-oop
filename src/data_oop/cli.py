@@ -350,6 +350,46 @@ def cmd_abox_delete(args: argparse.Namespace) -> None:
         print(f"No node or relationship found with uuid '{args.uuid}'.")
 
 
+def cmd_tbox_delete_class(args: argparse.Namespace) -> None:
+    """Delete a ClassDef in TBox."""
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+    
+    print(f"Deleting class '{args.class_name}' from TBox (detach={args.detach})...")
+    repo.delete_class(name=args.class_name, detach=args.detach)
+    print("Class deleted successfully.")
+
+
+def cmd_tbox_delete_property(args: argparse.Namespace) -> None:
+    """Delete a PropertyDef in TBox."""
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+
+    print(f"Deleting property '{args.name}' from TBox (detach={args.detach})...")
+    repo.delete_property(name=args.name, detach=args.detach)
+    print("Property deleted successfully.")
+
+
+def cmd_tbox_detach_property(args: argparse.Namespace) -> None:
+    """Detach PropertyDef from ClassDef in TBox."""
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+
+    print(f"Detaching property '{args.property}' from class '{args.class_name}'...")
+    repo.detach_property_from_class(class_name=args.class_name, property_name=args.property)
+    print("Property detached successfully.")
+
+
+def cmd_tbox_delete_relationship(args: argparse.Namespace) -> None:
+    """Delete a RelationshipDef in TBox."""
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+
+    print(f"Deleting relationship '{args.id}' from TBox...")
+    repo.delete_relationship(id=args.id)
+    print("Relationship deleted successfully.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="CLI utility for data-oop FalkorDB TBox and ABox schema operations."
@@ -447,6 +487,29 @@ def main() -> None:
     p_abox_del = subparsers.add_parser("abox-delete", help="Delete a single ABox node or relationship by uuid")
     p_abox_del.add_argument("--uuid", required=True, help="UUID of the node or relationship to delete")
     p_abox_del.set_defaults(func=cmd_abox_delete)
+
+    # tbox-delete-class
+    p_tbox_del_cls = subparsers.add_parser("tbox-delete-class", help="Delete a ClassDef in TBox")
+    p_tbox_del_cls.add_argument("--class-name", required=True, help="Name of the ClassDef to delete")
+    p_tbox_del_cls.add_argument("--detach", action="store_true", help="Detach from interfaces/properties/relationships first")
+    p_tbox_del_cls.set_defaults(func=cmd_tbox_delete_class)
+
+    # tbox-delete-property
+    p_tbox_del_prop = subparsers.add_parser("tbox-delete-property", help="Delete a PropertyDef in TBox")
+    p_tbox_del_prop.add_argument("--name", required=True, help="Name of the PropertyDef to delete")
+    p_tbox_del_prop.add_argument("--detach", action="store_true", help="Detach from classes/interfaces/relationships first")
+    p_tbox_del_prop.set_defaults(func=cmd_tbox_delete_property)
+
+    # tbox-detach-property
+    p_tbox_detach = subparsers.add_parser("tbox-detach-property", help="Detach PropertyDef from ClassDef in TBox")
+    p_tbox_detach.add_argument("--class-name", required=True, help="Name of the ClassDef")
+    p_tbox_detach.add_argument("--property", required=True, help="Name of the PropertyDef to detach")
+    p_tbox_detach.set_defaults(func=cmd_tbox_detach_property)
+
+    # tbox-delete-relationship
+    p_tbox_del_rel = subparsers.add_parser("tbox-delete-relationship", help="Delete a RelationshipDef in TBox")
+    p_tbox_del_rel.add_argument("--id", required=True, help="ID of the RelationshipDef to delete")
+    p_tbox_del_rel.set_defaults(func=cmd_tbox_delete_relationship)
 
     args = parser.parse_args()
 

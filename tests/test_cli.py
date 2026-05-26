@@ -244,3 +244,89 @@ def test_cli_abox_delete(mock_delete) -> None:
         password=None,
         uuid="my-uuid"
     )
+
+
+@patch("data_oop.cli.FalkorTBoxRepository")
+@patch("data_oop.cli.get_db_connection")
+def test_cli_tbox_delete_class(mock_get_db, mock_repo_class) -> None:
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_get_db.return_value = (None, None)
+
+    test_args = [
+        "data-oop",
+        "tbox-delete-class",
+        "--class-name", "User",
+        "--detach"
+    ]
+    with patch.object(sys, "argv", test_args):
+        main()
+
+    mock_repo.delete_class.assert_called_once_with(
+        name="User",
+        detach=True
+    )
+
+
+@patch("data_oop.cli.FalkorTBoxRepository")
+@patch("data_oop.cli.get_db_connection")
+def test_cli_tbox_delete_property(mock_get_db, mock_repo_class) -> None:
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_get_db.return_value = (None, None)
+
+    test_args = [
+        "data-oop",
+        "tbox-delete-property",
+        "--name", "age",
+        "--detach"
+    ]
+    with patch.object(sys, "argv", test_args):
+        main()
+
+    mock_repo.delete_property.assert_called_once_with(
+        name="age",
+        detach=True
+    )
+
+
+@patch("data_oop.cli.FalkorTBoxRepository")
+@patch("data_oop.cli.get_db_connection")
+def test_cli_tbox_detach_property(mock_get_db, mock_repo_class) -> None:
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_get_db.return_value = (None, None)
+
+    test_args = [
+        "data-oop",
+        "tbox-detach-property",
+        "--class-name", "User",
+        "--property", "age"
+    ]
+    with patch.object(sys, "argv", test_args):
+        main()
+
+    mock_repo.detach_property_from_class.assert_called_once_with(
+        class_name="User",
+        property_name="age"
+    )
+
+
+@patch("data_oop.cli.FalkorTBoxRepository")
+@patch("data_oop.cli.get_db_connection")
+def test_cli_tbox_delete_relationship(mock_get_db, mock_repo_class) -> None:
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_get_db.return_value = (None, None)
+
+    test_args = [
+        "data-oop",
+        "tbox-delete-relationship",
+        "--id", "rel_user_groups"
+    ]
+    with patch.object(sys, "argv", test_args):
+        main()
+
+    mock_repo.delete_relationship.assert_called_once_with(
+        id="rel_user_groups"
+    )
