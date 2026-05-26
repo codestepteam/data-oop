@@ -1,133 +1,98 @@
-# Commerce Data OOP CLI Utility Guide
+# data-oop CLI Usage Guide
 
-The `data-oop` library comes with a built-in CLI utility for managing, validating, inspecting, and executing workflows in FalkorDB using the TBox (ontology) and ABox (data) models.
+The `data-oop` command-line utility provides tools to manage, inspect, validate, and run workflows in FalkorDB.
 
 ---
 
-## 1. Installation & Running
+## 1. Installation & Execution
 
-### Running with `uv` (Local Development)
-
-To run the CLI directly from the source directory:
+### Running locally (using `uv`)
+No installation required. Run directly from the project directory:
 ```bash
-# Display help
 uv run data-oop --help
-
-# Run a subcommand
-uv run data-oop inspect
 ```
 
-### Installing globally as a command
-
-You can install the CLI globally on your machine using `uv tool`:
+### Global Installation
+Install the tool globally on your system path:
 ```bash
 uv tool install .
 ```
-This registers `data-oop` globally as an executable on your system path.
+After installation, the command `data-oop` will be globally available.
 
 ---
 
-## 2. Global Database Options
+## 2. Configuration (Environment Variables & Flags)
 
-You can specify database connections using command-line flags or environment variables:
+Connection parameters can be set via command-line flags or environment variables:
 
-| Argument | Environment Variable | Default Value | Description |
+| Flag | Environment Variable | Default | Description |
 |---|---|---|---|
-| `--host` | `FALKOR_HOST` | `localhost` | FalkorDB Host |
-| `--port` | `FALKOR_PORT` | `6380` | FalkorDB Port |
-| `--graph` | `FALKOR_GRAPH` | `data_oop` | Graph Name |
-| `--username` | `FALKOR_USERNAME` | *None* | Authentication Username |
-| `--password` | `FALKOR_PASSWORD` | *None* | Authentication Password |
+| `--host` | `FALKOR_HOST` | `localhost` | FalkorDB host address |
+| `--port` | `FALKOR_PORT` | `6380` | FalkorDB port |
+| `--graph` | `FALKOR_GRAPH` | `data_oop` | Database graph name |
+| `--username` | `FALKOR_USERNAME` | *None* | FalkorDB username |
+| `--password` | `FALKOR_PASSWORD` | *None* | FalkorDB password |
 
-Example using environment variables:
+Example with environment variables:
 ```bash
-FALKOR_PORT=6380 FALKOR_GRAPH=prod_data data-oop inspect
+FALKOR_HOST="macmini" FALKOR_PORT=6380 data-oop inspect
 ```
 
 ---
 
-## 3. Subcommands & Examples
+## 3. Command Reference
 
-### A. Inspect Schema (`inspect`)
-Lists all Classes, Properties, Interfaces, Relationships, and Workflows defined in the DB.
-
+### A. `inspect`
+Displays TBox definition details (Classes, Properties, Relationships) and list of stored Workflows.
 ```bash
 data-oop inspect
 ```
 
-### B. Load TBox Schema (`load-tbox`)
-Parses a TBox builder script, extracts a global `TBoxBuilder` (or `TBoxRepository` or `build_tbox()` function), and loads it into FalkorDB.
-
+### B. `load-tbox`
+Loads TBox definitions from a Python script containing a `TBoxBuilder` instance or a `build_tbox` function.
 ```bash
-# Load schema (keeping existing nodes if possible)
-data-oop load-tbox --file my_schema.py
+# Load schema (preserving existing data where possible)
+data-oop load-tbox --file path/to/builder_script.py
 
-# Re-create schema from scratch (wipes the graph first)
-data-oop load-tbox --file my_schema.py --clear
+# Wipe the graph and recreate TBox schema from scratch
+data-oop load-tbox --file path/to/builder_script.py --clear
 ```
 
-#### Expected TBox Builder Script Format (`my_schema.py`)
-```python
-from data_oop import TBoxBuilder
-
-builder = TBoxBuilder()
-builder.class_("Department", description="Department info") \
-    .property("name", datatype="string", required=True, unique=True) \
-    .property("code", datatype="string", required=True, unique=True) \
-    .end() \
-    .class_("Project", description="Project info") \
-    .property("title", datatype="string", required=True) \
-    .property("budget", datatype="integer", required=False) \
-    .end() \
-    .relationship("rel_dept_runs_project", "RUNS", "Department", "Project")
-```
-
-### C. Run ABox Validation (`validate`)
-Validates all ABox instances against the TBox schema currently loaded in FalkorDB. If there are validation errors, it prints details and exits with code `1`.
-
+### C. `validate`
+Validates ABox node instances against the current TBox schema. Prints list of issues and exits with code `1` if validation errors exist.
 ```bash
+# Run validation
 data-oop validate
+
+# Run validation with a custom run ID
+data-oop validate --run-id custom-validation-run
 ```
 
-### D. Clear ABox Data (`clear-abox`)
-Deletes all ABox instances (domain-labeled nodes) while keeping the TBox schema definition and validation report structures intact.
-
+### D. `clear-abox`
+Wipes all ABox instance nodes (domain data) from the graph, keeping TBox and validation schemas intact.
 ```bash
 # Interactive prompt
 data-oop clear-abox
 
-# Force clear without prompt (useful in scripts/CI)
+# Force clear without interactive prompt (useful for automation)
 data-oop clear-abox --yes
 ```
 
-### E. Run Stored Workflows (`run-workflow`)
-Runs a predefined workflow definition stored in the FalkorDB by name, substituting provided parameter values.
-
+### E. `run-workflow`
+Executes a stored workflow by name, using provided parameters.
 ```bash
-# Pass params as inline JSON string
-data-oop run-workflow --name new_dept_project_workflow --params '{"project_title": "AI Platform Setup", "budget": 120000, "dept_uuid": "dept-it-01"}'
+# Run with inline JSON parameters
+data-oop run-workflow --name add_new_product --params '{"product_name": "Keyboard", "price": 45000}'
 
-# Pass params from a JSON file
-data-oop run-workflow --name new_dept_project_workflow --params-file params.json
+# Run with parameters loaded from a JSON file
+data-oop run-workflow --name add_new_product --params-file params.json
 ```
 
 ---
 
-## 4. Deployment & Distribution
+## 4. CI/CD Integration
 
-### Packaging and Publishing to PyPI
-The project is configured using `pyproject.toml` and built with `hatchling`.
-To build and publish:
-```bash
-# Build wheel and source distributions
-uv build
-
-# Publish to PyPI
-uv publish
-```
-
-### CI/CD Integration
-In CI pipelines (like GitHub Actions), you can use the CLI to validate data consistency on changes:
+To automatically validate data integrity in a CI pipeline (e.g., GitHub Actions):
 ```yaml
 - name: Run Schema Validation
   env:
@@ -138,4 +103,4 @@ In CI pipelines (like GitHub Actions), you can use the CLI to validate data cons
     pip install data-oop
     data-oop validate
 ```
-If any constraints are violated, `data-oop validate` will return non-zero exit status, failing the build pipeline automatically.
+If validation fails, the command exits with code `1`, causing the pipeline stage to fail.
