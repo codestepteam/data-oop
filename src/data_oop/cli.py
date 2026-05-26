@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import sys
@@ -11,67 +10,11 @@ from typing import Any
 from falkordb import FalkorDB
 
 from data_oop import (
-    InMemoryTBoxRepository,
     FalkorTBoxRepository,
     connect_and_clear_abox_nodes,
-    connect_and_load_tbox_to_falkor,
     connect_and_run_latest_falkor_abox_validation,
     run_workflow,
 )
-
-
-def load_tbox_repository_from_file(filepath: str) -> Any:
-    """Dynamically load python file and extract a TBoxRepository or TBoxBuilder."""
-    path = Path(filepath).resolve()
-    if not path.exists():
-        print(f"Error: Schema file not found: {path}", file=sys.stderr)
-        sys.exit(1)
-
-    module_name = path.stem
-    spec = importlib.util.spec_from_file_location(module_name, str(path))
-    if spec is None or spec.loader is None:
-        print(f"Error: Cannot load module from path: {path}", file=sys.stderr)
-        sys.exit(1)
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except Exception as e:
-        print(f"Error while executing schema file: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    from data_oop import TBoxBuilder, TBoxRepository
-
-    # 1. Search for a function named build_tbox or build_schema
-    for func_name in ("build_tbox", "build_schema"):
-        if hasattr(module, func_name):
-            func = getattr(module, func_name)
-            if callable(func):
-                result = func()
-                if isinstance(result, TBoxRepository):
-                    return result
-                elif isinstance(result, TBoxBuilder):
-                    return result.build()
-
-    # 2. Search for a global TBoxRepository instance
-    for name in dir(module):
-        obj = getattr(module, name)
-        # Avoid checking module types themselves or classes, just check instances
-        if not isinstance(obj, type) and isinstance(obj, TBoxRepository):
-            return obj
-
-    # 3. Search for a global TBoxBuilder instance
-    for name in dir(module):
-        obj = getattr(module, name)
-        if not isinstance(obj, type) and isinstance(obj, TBoxBuilder):
-            return obj.build()
-
-    print(
-        "Error: Could not find any TBoxRepository, TBoxBuilder, or build_tbox()/build_schema() function in the schema file.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
 
 
 def get_db_connection(args: argparse.Namespace) -> tuple[FalkorDB, Any]:
@@ -138,31 +81,6 @@ def cmd_clear_abox(args: argparse.Namespace) -> None:
         password=password,
     )
     print("ABox nodes cleared successfully.")
-
-
-def cmd_load_tbox(args: argparse.Namespace) -> None:
-    """Load TBox schema definitions from a python file."""
-    repo = load_tbox_repository_from_file(args.file)
-
-    host = os.environ.get("FALKOR_HOST", args.host)
-    port = int(os.environ.get("FALKOR_PORT", str(args.port)))
-    graph_name = os.environ.get("FALKOR_GRAPH", args.graph)
-    username = os.environ.get("FALKOR_USERNAME", args.username)
-    password = os.environ.get("FALKOR_PASSWORD", args.password)
-
-    print(f"Loading TBox into graph '{graph_name}' (clear={args.clear})...")
-    result = connect_and_load_tbox_to_falkor(
-        repo,
-        graph_name=graph_name,
-        host=host,
-        port=port,
-        username=username,
-        password=password,
-        clear=args.clear,
-    )
-    print("TBox schema loaded successfully.")
-    print(f"Created nodes: {result.nodes} (Classes: {result.classes}, Interfaces: {result.interfaces}, Relationships: {result.relationships})")
-    print(f"Created edges: {result.edges}")
 
 
 def cmd_run_workflow(args: argparse.Namespace) -> None:
@@ -265,12 +183,6 @@ def main() -> None:
     parser_clear = subparsers.add_parser("clear-abox", help="Clear all ABox domain nodes from FalkorDB")
     parser_clear.add_argument("-y", "--yes", action="store_true", help="Confirm clearing without interactive prompt")
     parser_clear.set_defaults(func=cmd_clear_abox)
-
-    # load-tbox
-    parser_load = subparsers.add_parser("load-tbox", help="Load TBox schema definitions from a python file")
-    parser_load.add_argument("-f", "--file", required=True, help="Path to Python schema file containing tbox definitions")
-    parser_load.add_argument("--clear", action="store_true", help="Delete entire graph before loading")
-    parser_load.set_defaults(func=cmd_load_tbox)
 
     # run-workflow
     parser_workflow = subparsers.add_parser("run-workflow", help="Run a workflow definition stored in FalkorDB")
