@@ -850,7 +850,7 @@ class FalkorTBoxRepository:
     def define_relationship(
         self,
         *,
-        id: str,
+        id: str | None = None,
         name: str,
         from_class: str,
         to_class: str,
@@ -861,6 +861,9 @@ class FalkorTBoxRepository:
         metadata: dict[str, Any] | None = None,
         merge: bool = True,
     ) -> RelationshipDef:
+        if id is None:
+            id = f"rel_{from_class.lower()}_{name.lower()}_{to_class.lower()}"
+
         self._require_class(from_class)
         self._require_class(to_class)
 
