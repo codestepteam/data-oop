@@ -455,7 +455,7 @@ def main() -> None:
 
     # tbox-define-relationship
     p_tbox_rel = subparsers.add_parser("tbox-define-relationship", help="Define a RelationshipDef in TBox")
-    p_tbox_rel.add_argument("--id", required=True, help="Unique ID of the relationship definition")
+    p_tbox_rel.add_argument("--id", help="Unique ID of the relationship definition (auto-generated if omitted)")
     p_tbox_rel.add_argument("--name", required=True, help="Name (type) of the relationship (e.g., HAS_MEMBER)")
     p_tbox_rel.add_argument("--from-class", required=True, help="From ClassDef name")
     p_tbox_rel.add_argument("--to-class", required=True, help="To ClassDef name")

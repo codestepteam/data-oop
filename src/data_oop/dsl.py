@@ -73,11 +73,12 @@ class TBoxBuilder:
 
     def relationship(
         self,
-        id: str,
-        name: str,
-        from_class: str,
-        to_class: str,
+        id_or_name: str,
+        name_or_from: str | None = None,
+        from_or_to: str | None = None,
+        to_class: str | None = None,
         *,
+        id: str | None = None,
         min_count: int = 0,
         max_count: int | None = None,
         required: bool = False,
@@ -85,11 +86,24 @@ class TBoxBuilder:
         metadata: dict[str, Any] | None = None,
     ) -> TBoxBuilder:
         """Define a RelationshipDef."""
+        if to_class is None:
+            # Called as relationship("ORGANIZED", "Team", "Event")
+            real_id = id
+            real_name = id_or_name
+            real_from = name_or_from
+            real_to = from_or_to
+        else:
+            # Called as relationship("rel_id", "ORGANIZED", "Team", "Event")
+            real_id = id_or_name
+            real_name = name_or_from
+            real_from = from_or_to
+            real_to = to_class
+
         self.repo.define_relationship(
-            id=id,
-            name=name,
-            from_class=from_class,
-            to_class=to_class,
+            id=real_id,
+            name=real_name,
+            from_class=real_from,
+            to_class=real_to,
             min_count=min_count,
             max_count=max_count,
             required=required,

@@ -39,3 +39,23 @@ def test_tbox_builder_chains_correctly() -> None:
     assert repo.is_relationship_allowed(
         from_class="Team", relationship_name="ORGANIZED", to_class="Event"
     )
+
+
+def test_tbox_builder_relationship_without_id() -> None:
+    repo = InMemoryTBoxRepository()
+    builder = TBoxBuilder(repo)
+
+    builder.class_("Team") \
+        .end() \
+        .class_("Event") \
+        .end() \
+        .relationship("ORGANIZED", "Team", "Event")
+
+    # Verify relationship was created with auto-generated id
+    assert repo.is_relationship_allowed(
+        from_class="Team", relationship_name="ORGANIZED", to_class="Event"
+    )
+    # The default generated id format is rel_from_name_to
+    rel = repo.get_relationship("rel_team_organized_event")
+    assert rel is not None
+    assert rel.name == "ORGANIZED"
