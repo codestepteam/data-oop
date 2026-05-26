@@ -20,6 +20,16 @@ data-oop --help
 
 ---
 
+## [참고] 식별자 (ID/UUID) 관리 규칙
+
+CLI를 사용할 때 노드, 관계, 스키마의 식별자(ID/UUID)는 다음과 같은 규칙을 따릅니다.
+
+1. **ABox 노드 인스턴스 UUID**: 사용자가 노드 생성(`abox-upsert-node`) 시 `--uuid` 옵션으로 직접 고유 식별자를 입력해야 합니다.
+2. **ABox 엣지(관계) 인스턴스 UUID**: 사용자가 직접 입력하지 않습니다. 관계 생성(`abox-upsert-relationship`) 시 `출발UUID:관계명:도착UUID` 포맷으로 **내부에서 자동 생성**됩니다.
+3. **TBox 관계 정의 ID**: 사용자가 관계 스키마를 정의(`tbox-define-relationship`) 할 때 `--id` 옵션을 명시할 필요가 없습니다. 생략 시 `rel_출발클래스_관계명_도착클래스` 형식으로 **자동 생성**됩니다.
+
+---
+
 ## 1단계: TBox 설계 및 반영 (온톨로지 정의)
 
 지식그래프의 뼈대인 클래스(Class), 속성(Property), 제약 조건(Constraints), 관계(Relationship)를 점진적으로 선언합니다.
