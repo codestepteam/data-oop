@@ -152,6 +152,12 @@ def cmd_inspect(args: argparse.Namespace) -> None:
         min_max = f"cardinality: {rel.min_count}..{rel.max_count or 'N'}"
         print(f"  - {rel.id}: ({rel.from_class}) -[:{rel.name}]-> ({rel.to_class}) [{req_str}, {min_max}] - {rel.description or ''}")
 
+    constraints = repo.list_constraints()
+    if constraints:
+        print(f"\n[Constraints] ({len(constraints)})")
+        for const in constraints:
+            print(f"  - {const.id}: {const.kind} on {const.target_kind} '{const.target_id}' - {const.description or ''}")
+
     # Inspect workflows
     try:
         res = graph.query("MATCH (w:WorkflowDefinition) RETURN w.uuid, w.name, w.description")
@@ -229,13 +235,15 @@ def cmd_tbox_attach_property(args: argparse.Namespace) -> None:
         except json.JSONDecodeError:
             default_val = args.default
 
+    nullable_val = args.nullable == "true"
+
     print(f"Attaching property '{args.property}' to class '{args.class_name}'...")
     repo.attach_property_to_class(
         class_name=args.class_name,
         property_name=args.property,
         required=args.required,
         unique=args.unique,
-        nullable=args.nullable,
+        nullable=nullable_val,
         default=default_val,
         metadata=metadata,
     )
@@ -448,7 +456,7 @@ def main() -> None:
     p_tbox_attach.add_argument("--property", required=True, help="Name of the PropertyDef")
     p_tbox_attach.add_argument("--required", action="store_true", help="Set required constraint")
     p_tbox_attach.add_argument("--unique", action="store_true", help="Set unique constraint")
-    p_tbox_attach.add_argument("--nullable", type=bool, default=True, help="Set nullable constraint (default: True)")
+    p_tbox_attach.add_argument("--nullable", choices=["true", "false"], default="true", help="Set nullable constraint (default: true)")
     p_tbox_attach.add_argument("--default", help="Default value")
     p_tbox_attach.add_argument("--metadata", help="JSON string metadata")
     p_tbox_attach.set_defaults(func=cmd_tbox_attach_property)

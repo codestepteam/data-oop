@@ -132,6 +132,34 @@ def test_cli_tbox_attach_property(mock_get_db, mock_repo_class) -> None:
 
 @patch("data_oop.cli.FalkorTBoxRepository")
 @patch("data_oop.cli.get_db_connection")
+def test_cli_tbox_attach_property_not_nullable(mock_get_db, mock_repo_class) -> None:
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_get_db.return_value = (None, None)
+
+    test_args = [
+        "data-oop",
+        "tbox-attach-property",
+        "--class-name", "User",
+        "--property", "age",
+        "--nullable", "false"
+    ]
+    with patch.object(sys, "argv", test_args):
+        main()
+
+    mock_repo.attach_property_to_class.assert_called_once_with(
+        class_name="User",
+        property_name="age",
+        required=False,
+        unique=False,
+        nullable=False,
+        default=None,
+        metadata={}
+    )
+
+
+@patch("data_oop.cli.FalkorTBoxRepository")
+@patch("data_oop.cli.get_db_connection")
 def test_cli_tbox_define_relationship(mock_get_db, mock_repo_class) -> None:
     mock_repo = MagicMock()
     mock_repo_class.return_value = mock_repo
