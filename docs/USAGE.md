@@ -6,64 +6,14 @@
 
 ## 1. TBox 정의 및 로드
 
-TBox(클래스, 속성, 관계)를 정의하는 두 가지 방법(선언형 DSL, 빌더 DSL)을 지원합니다.
+TBox(클래스, 속성, 관계)를 정의할 때는 `TBoxBuilder`를 사용하여 체이닝 방식으로 동적 스키마를 구성합니다.
 
-### A. 선언형(Declarative) DSL (추천)
-
-데코레이터 `@tbox_class`와 `Property` 클래스를 사용하여 Python 클래스 형태로 스키마를 정의합니다.
+### A. TBox 정의 및 FalkorDB 로드 예시
 
 ```python
-from data_oop import (
-    InMemoryTBoxRepository,
-    Property,
-    RelationshipSpec,
-    load_tbox_from_specs,
-    tbox_class,
-    connect_and_load_tbox_to_falkor,
-)
+from data_oop import InMemoryTBoxRepository, TBoxBuilder, connect_and_load_tbox_to_falkor
 
-# 1. 클래스 및 속성 정의
-@tbox_class(description="회사 부서 정보")
-class Department:
-    name = Property(datatype="string", required=True, unique=True)
-    code = Property(datatype="string", required=True, unique=True)
-
-@tbox_class(description="부서 프로젝트 정보")
-class Project:
-    title = Property(datatype="string", required=True)
-    budget = Property(datatype="integer", required=False)
-
-# 2. 인메모리 저장소에 스펙 로드 및 관계 정의
-repo = InMemoryTBoxRepository()
-load_tbox_from_specs(
-    repo,
-    classes=[Department, Project],
-    relationships=[
-        RelationshipSpec(
-            id="rel_dept_runs_project",
-            name="RUNS",
-            from_class=Department,
-            to_class=Project,
-            required=False,
-        )
-    ],
-)
-
-# 3. FalkorDB에 TBox 스키마 로드 (Macmini의 localhost:6380, commerce_data_oop 그래프 기준)
-from falkordb import FalkorDB
-db = FalkorDB(host="localhost", port=6380)
-graph = db.select_graph("commerce_data_oop")
-
-connect_and_load_tbox_to_falkor(repo)
-```
-
-### B. 빌더(Fluent) DSL
-
-체이닝 방식으로 TBox를 동적 생성합니다.
-
-```python
-from data_oop import InMemoryTBoxRepository, TBoxBuilder
-
+# 1. 빌더를 이용해 TBox 정의
 repo = InMemoryTBoxRepository()
 builder = TBoxBuilder(repo)
 
@@ -76,6 +26,15 @@ builder.class_("Department", description="회사 부서 정보") \
     .property("budget", datatype="integer", required=False) \
     .end() \
     .relationship("rel_dept_runs_project", "RUNS", "Department", "Project")
+
+# 2. FalkorDB에 TBox 스키마 로드 (Macmini의 localhost:6380, commerce_data_oop 그래프 기준)
+connect_and_load_tbox_to_falkor(
+    repo,
+    graph_name="commerce_data_oop",
+    host="localhost",
+    port=6380,
+    clear=True
+)
 ```
 
 ---

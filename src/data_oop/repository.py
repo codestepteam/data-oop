@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from .models import (
     ClassDef,
@@ -13,6 +13,7 @@ from .models import (
 )
 
 
+@runtime_checkable
 class TBoxRepository(Protocol):
     # Class
     def create_class(

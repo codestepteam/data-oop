@@ -11,6 +11,9 @@ dependencies = [
   "uvicorn>=0.48.0",
 ]
 
+[project.scripts]
+data-oop = "data_oop.cli:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3.0",
