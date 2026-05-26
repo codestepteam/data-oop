@@ -28,3 +28,9 @@ packages = ["src/data_oop"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "coverage>=7.14.0",
+    "pytest-cov>=7.1.0",
+]

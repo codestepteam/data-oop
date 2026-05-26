@@ -176,7 +176,7 @@ class TBoxRepository(Protocol):
     def define_relationship(
         self,
         *,
-        id: str,
+        id: str | None = None,
         name: str,
         from_class: str,
         to_class: str,
