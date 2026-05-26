@@ -56,7 +56,7 @@ data-oop inspect
 ```
 
 ### B. Load TBox Schema (`load-tbox`)
-Parses a Python schema file, extracts a global `TBoxBuilder` (or `TBoxRepository` or `build_tbox()` function), and loads it into FalkorDB.
+Parses a TBox builder script, extracts a global `TBoxBuilder` (or `TBoxRepository` or `build_tbox()` function), and loads it into FalkorDB.
 
 ```bash
 # Load schema (keeping existing nodes if possible)
@@ -66,7 +66,7 @@ data-oop load-tbox --file my_schema.py
 data-oop load-tbox --file my_schema.py --clear
 ```
 
-#### Expected Schema File Format (`my_schema.py`)
+#### Expected TBox Builder Script Format (`my_schema.py`)
 ```python
 from data_oop import TBoxBuilder
 
