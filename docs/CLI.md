@@ -92,6 +92,48 @@ data-oop run-workflow --name add_new_product --params '{"product_name": "Keyboar
 data-oop run-workflow --name add_new_product --params-file params.json
 ```
 
+### E. `tbox-create-class`
+
+Creates a ClassDef in the TBox graph directly from command arguments.
+```bash
+data-oop tbox-create-class --class-name Department --description "Department info" --metadata '{"domain": "commerce"}'
+```
+
+### F. `tbox-create-property`
+
+Creates a PropertyDef in the TBox graph directly from command arguments.
+```bash
+data-oop tbox-create-property --name code --datatype string --description "Unique code"
+```
+
+### G. `tbox-attach-property`
+
+Attaches a PropertyDef to a ClassDef with required/unique constraints.
+```bash
+data-oop tbox-attach-property --class-name Department --property code --required --unique --default '"IT-00"'
+```
+
+### H. `tbox-define-relationship`
+
+Defines a RelationshipDef link schema between two Classes in the TBox graph.
+```bash
+data-oop tbox-define-relationship --id rel_dept_runs_project --name RUNS --from-class Department --to-class Project --required
+```
+
+### I. `abox-upsert-node`
+
+Creates or updates a single ABox node instance directly without using workflow templates.
+```bash
+data-oop abox-upsert-node --class-name Department --uuid dept-it-01 --properties '{"name": "IT Department", "code": "IT-01"}'
+```
+
+### J. `abox-upsert-relationship`
+
+Creates or updates a single ABox relationship link directly between two nodes without workflows.
+```bash
+data-oop abox-upsert-relationship --from-class Department --from-uuid dept-it-01 --name RUNS --to-class Project --to-uuid proj-cloud-migration --properties '{"since": "2026-05-26"}'
+```
+
 ---
 
 ## 4. CI/CD Integration
