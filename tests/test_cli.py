@@ -358,3 +358,35 @@ def test_cli_tbox_delete_relationship(mock_get_db, mock_repo_class) -> None:
     mock_repo.delete_relationship.assert_called_once_with(
         id="rel_user_groups"
     )
+
+
+def test_cli_load_dotenv(tmp_path) -> None:
+    from data_oop.cli import load_dotenv
+    import os
+
+    # Create a temporary .env file
+    dotenv_file = tmp_path / ".env"
+    dotenv_file.write_text(
+        "# This is a comment\n"
+        "FALKOR_HOST=my-custom-host\n"
+        "FALKOR_PORT=9999\n"
+        "FALKOR_PASSWORD='my-secret-pass'\n"
+    )
+
+    cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        os.environ.pop("FALKOR_HOST", None)
+        os.environ.pop("FALKOR_PORT", None)
+        os.environ.pop("FALKOR_PASSWORD", None)
+
+        load_dotenv()
+
+        assert os.environ.get("FALKOR_HOST") == "my-custom-host"
+        assert os.environ.get("FALKOR_PORT") == "9999"
+        assert os.environ.get("FALKOR_PASSWORD") == "my-secret-pass"
+    finally:
+        os.chdir(cwd)
+        os.environ.pop("FALKOR_HOST", None)
+        os.environ.pop("FALKOR_PORT", None)
+        os.environ.pop("FALKOR_PASSWORD", None)

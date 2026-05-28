@@ -398,7 +398,30 @@ def cmd_tbox_delete_relationship(args: argparse.Namespace) -> None:
     print("Relationship deleted successfully.")
 
 
+def load_dotenv(dotenv_path: str = ".env") -> None:
+    """Load variables from a .env file into os.environ if it exists."""
+    if not os.path.exists(dotenv_path):
+        return
+    try:
+        with open(dotenv_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    val = val.strip()
+                    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                        val = val[1:-1]
+                    if key not in os.environ:
+                        os.environ[key] = val
+    except Exception as e:
+        print(f"Warning: Failed to load .env file: {e}", file=sys.stderr)
+
+
 def main() -> None:
+    load_dotenv()
     parser = argparse.ArgumentParser(
         description="CLI utility for data-oop FalkorDB TBox and ABox schema operations."
     )
