@@ -593,12 +593,12 @@ def main() -> None:
     p_tbox_del_rel.set_defaults(func=cmd_tbox_delete_relationship)
 
     # db-dump
-    p_db_dump = subparsers.add_parser("db-dump", help="Dump FalkorDB graph data to a file")
+    p_db_dump = subparsers.add_parser("db-dump", help="Dump FalkorDB graph data to a file (graph specified by global --graph option)")
     p_db_dump.add_argument("-f", "--file", required=True, help="Path to output dump file")
     p_db_dump.set_defaults(func=cmd_db_dump)
 
     # db-restore
-    p_db_restore = subparsers.add_parser("db-restore", help="Restore FalkorDB graph data from a dump file")
+    p_db_restore = subparsers.add_parser("db-restore", help="Restore FalkorDB graph data from a dump file (graph specified by global --graph option)")
     p_db_restore.add_argument("-f", "--file", required=True, help="Path to input dump file")
     p_db_restore.set_defaults(func=cmd_db_restore)
 
