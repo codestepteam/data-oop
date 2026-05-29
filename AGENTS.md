@@ -56,3 +56,14 @@ uv run python scripts/run_validation.py --host localhost --port 6380 --graph dat
 - ABox node는 `uuid`가 없으면 error다.
 - required/unique property를 검사한다.
 - relationship cardinality는 local edge로 검사한다.
+
+## CLI 자동 버전 관리 (Pre-commit Hook)
+
+CLI 관련 파일(`src/data_oop/cli.py` 또는 `scripts/run_validation.py`)이 수정되어 커밋될 때마다, 패치 버전(Z)이 자동으로 증가하며 `pyproject.toml`과 `uv.lock`이 함께 스테이징됩니다.
+
+- 메이저(X) 또는 마이너(Y) 버전은 `pyproject.toml`에서 직접 수정하여 명시적으로 올립니다.
+- 로컬 Hook 설치 및 활성화 방법:
+  ```bash
+  # 이미 복사 및 권한 부여가 완료되었습니다.
+  chmod +x .git/hooks/pre-commit
+  ```
