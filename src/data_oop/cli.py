@@ -464,8 +464,7 @@ def load_dotenv(dotenv_path: str = ".env") -> None:
                     val = val.strip()
                     if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
                         val = val[1:-1]
-                    if key not in os.environ:
-                        os.environ[key] = val
+                    os.environ[key] = val
     except Exception as e:
         print(f"Warning: Failed to load .env file: {e}", file=sys.stderr)
 
