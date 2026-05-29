@@ -12,6 +12,24 @@ import { ValidationTab } from "./components/ValidationTab";
 import { WorkflowTab } from "./components/WorkflowTab";
 import { NodeSelectorModal } from "./components/NodeSelectorModal";
 
+// Intercept all fetch requests to inject x-graph-name header
+const originalFetch = window.fetch;
+window.fetch = async (input, init) => {
+  const selectedGraph = localStorage.getItem("selected_graph") || "data_oop";
+  const newInit = { ...init };
+  const newHeaders = new Headers(newInit.headers || (input instanceof Request ? input.headers : undefined));
+  if (!newHeaders.has("x-graph-name")) {
+    newHeaders.set("x-graph-name", selectedGraph);
+  }
+  newInit.headers = newHeaders;
+  
+  if (input instanceof Request) {
+    const req = new Request(input, newInit);
+    return originalFetch(req);
+  }
+  return originalFetch(input, newInit);
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<"tbox" | "validation" | "workflow">(() => {
     const params = new URLSearchParams(window.location.search);
@@ -21,6 +39,27 @@ export default function App() {
     }
     return "tbox";
   });
+
+  const [selectedGraph, setSelectedGraph] = useState(() => {
+    return localStorage.getItem("selected_graph") || "data_oop";
+  });
+  const [graphs, setGraphs] = useState<string[]>(["data_oop"]);
+
+  // Fetch list of graphs on mount
+  useEffect(() => {
+    fetch("/api/graphs")
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setGraphs(data);
+          if (!data.includes(selectedGraph) && data.length > 0) {
+            setSelectedGraph(data[0]);
+            localStorage.setItem("selected_graph", data[0]);
+          }
+        }
+      })
+      .catch((err) => console.error("Error fetching graphs", err));
+  }, []);
 
   // Sync tab with URL search parameters
   useEffect(() => {
@@ -106,7 +145,7 @@ export default function App() {
     fetchLatestValidation();
     fetchAboxData();
     fetchWorkflows();
-  }, [fetchTBox, fetchLatestValidation, fetchAboxData, fetchWorkflows]);
+  }, [selectedGraph, fetchTBox, fetchLatestValidation, fetchAboxData, fetchWorkflows]);
 
   const handleTabChange = (tab: "tbox" | "validation" | "workflow") => {
     setActiveTab(tab);
@@ -129,6 +168,25 @@ export default function App() {
           <div>
             <h1 className="text-xl font-bold tracking-tight leading-none m-0 text-white">Data OOP Studio</h1>
             <p className="text-xs text-slate-400 mt-1">Live FalkorDB TBox & Workflows Explorer</p>
+          </div>
+          {/* Graph Selector */}
+          <div className="ml-6 flex items-center bg-slate-800 border border-slate-700 rounded-md px-2 py-1">
+            <span className="text-xs text-slate-400 mr-2 uppercase font-semibold">Graph:</span>
+            <select
+              value={selectedGraph}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSelectedGraph(val);
+                localStorage.setItem("selected_graph", val);
+              }}
+              className="bg-transparent text-white text-sm font-semibold focus:outline-none cursor-pointer pr-1"
+            >
+              {graphs.map((g) => (
+                <option key={g} value={g} className="bg-white text-slate-900">
+                  {g}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
         <div className="flex space-x-2">

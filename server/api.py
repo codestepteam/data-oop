@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import contextvars
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from falkordb import FalkorDB
@@ -24,11 +25,23 @@ app.add_middleware(
 )
 
 
+selected_graph_var = contextvars.ContextVar("selected_graph", default="data_oop")
+
+@app.middleware("http")
+async def add_graph_context(request: Request, call_next):
+    graph_name = request.headers.get("x-graph-name") or request.query_params.get("graph") or os.getenv("FALKOR_GRAPH", "data_oop")
+    token = selected_graph_var.set(graph_name)
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        selected_graph_var.reset(token)
+
 # DB helper
 def get_graph():
     host = os.getenv("FALKOR_HOST", "macmini")
     port = int(os.getenv("FALKOR_PORT", 6380))
-    graph_name = os.getenv("FALKOR_GRAPH", "data_oop")
+    graph_name = selected_graph_var.get()
     db = FalkorDB(host=host, port=port)
     return db.select_graph(graph_name)
 
@@ -112,6 +125,28 @@ class ParseParametersRequest(BaseModel):
 
 
 # Endpoints
+@app.get("/api/graphs")
+def list_graphs():
+    try:
+        host = os.getenv("FALKOR_HOST", "macmini")
+        port = int(os.getenv("FALKOR_PORT", 6380))
+        import redis
+        r = redis.Redis(host=host, port=port)
+        graphs = []
+        for key in r.keys():
+            key_str = key.decode("utf-8")
+            if not key_str.startswith("telemetry{") and r.type(key) == b"graphdata":
+                graphs.append(key_str)
+        # fallback to what FalkorDB db.list_graphs() says + FalkorDB default if empty
+        if not graphs:
+            db = FalkorDB(host=host, port=port)
+            graphs = db.list_graphs()
+        if "data_oop" not in graphs:
+            graphs.append("data_oop")
+        return sorted(list(set(graphs)))
+    except Exception as e:
+        return ["data_oop", "ping"]
+
 @app.get("/api/tbox")
 def get_tbox():
     try:
