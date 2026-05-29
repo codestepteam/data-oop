@@ -40,7 +40,7 @@ Password: 공백
 ## Validation 운영
 
 ```bash
-uv run python scripts/run_validation.py --host localhost --port 6380 --graph data_oop
+uv run data-oop validate --host localhost --port 6380 --graph data_oop
 ```
 
 남는 validation 노드는 항상 최신 실행 결과 하나다.
@@ -59,7 +59,7 @@ uv run python scripts/run_validation.py --host localhost --port 6380 --graph dat
 
 ## CLI 자동 버전 관리 (Pre-commit Hook)
 
-CLI 관련 파일(`src/data_oop/cli.py` 또는 `scripts/run_validation.py`)이 수정되어 커밋될 때마다, 패치 버전(Z)이 자동으로 증가하며 `pyproject.toml`과 `uv.lock`이 함께 스테이징됩니다.
+CLI 관련 파일(`src/data_oop/cli.py`)이 수정되어 커밋될 때마다, 패치 버전(Z)이 자동으로 증가하며 `pyproject.toml`과 `uv.lock`이 함께 스테이징됩니다.
 
 - 메이저(X) 또는 마이너(Y) 버전은 `pyproject.toml`에서 직접 수정하여 명시적으로 올립니다.
 - 로컬 Hook 설치 및 활성화 방법:
