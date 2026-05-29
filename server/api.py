@@ -11,6 +11,9 @@ from falkordb import FalkorDB
 from data_oop.falkor_repository import FalkorTBoxRepository
 from data_oop.workflows import save_workflow, run_workflow
 from data_oop.falkor_validation import run_latest_falkor_abox_validation
+from data_oop.cli import load_dotenv
+
+load_dotenv()
 
 
 app = FastAPI(title="Data OOP TBox & Workflow API")
@@ -29,7 +32,7 @@ selected_graph_var = contextvars.ContextVar("selected_graph", default="data_oop"
 
 @app.middleware("http")
 async def add_graph_context(request: Request, call_next):
-    graph_name = request.headers.get("x-graph-name") or request.query_params.get("graph") or os.getenv("FALKOR_GRAPH", "data_oop")
+    graph_name = request.headers.get("x-graph-name") or request.query_params.get("graph") or os.getenv("FALKORDB_GRAPH") or os.getenv("FALKOR_GRAPH", "data_oop")
     token = selected_graph_var.set(graph_name)
     try:
         response = await call_next(request)
@@ -39,10 +42,12 @@ async def add_graph_context(request: Request, call_next):
 
 # DB helper
 def get_graph():
-    host = os.getenv("FALKOR_HOST", "macmini")
-    port = int(os.getenv("FALKOR_PORT", 6380))
+    host = os.getenv("FALKORDB_HOST") or os.getenv("FALKOR_HOST", "macmini")
+    port = int(os.getenv("FALKORDB_PORT") or os.getenv("FALKOR_PORT", 6380))
+    username = os.getenv("FALKORDB_USERNAME") or os.getenv("FALKOR_USERNAME")
+    password = os.getenv("FALKORDB_PASSWORD") or os.getenv("FALKOR_PASSWORD")
     graph_name = selected_graph_var.get()
-    db = FalkorDB(host=host, port=port)
+    db = FalkorDB(host=host, port=port, username=username, password=password)
     return db.select_graph(graph_name)
 
 

@@ -22,13 +22,19 @@ from data_oop import (
 )
 
 
+def _get_db_env_values(args: argparse.Namespace) -> tuple[str, int, str, str | None, str | None]:
+    """Helper to retrieve FalkorDB connection params from environment or args."""
+    host = os.environ.get("FALKORDB_HOST", os.environ.get("FALKOR_HOST", args.host))
+    port = int(os.environ.get("FALKORDB_PORT", os.environ.get("FALKOR_PORT", str(args.port))))
+    graph_name = os.environ.get("FALKORDB_GRAPH", os.environ.get("FALKOR_GRAPH", args.graph))
+    username = os.environ.get("FALKORDB_USERNAME", os.environ.get("FALKOR_USERNAME", args.username))
+    password = os.environ.get("FALKORDB_PASSWORD", os.environ.get("FALKOR_PASSWORD", args.password))
+    return host, port, graph_name, username, password
+
+
 def get_db_connection(args: argparse.Namespace) -> tuple[FalkorDB, Any]:
     """Helper to connect to FalkorDB based on CLI arguments and Env variables."""
-    host = os.environ.get("FALKOR_HOST", args.host)
-    port = int(os.environ.get("FALKOR_PORT", str(args.port)))
-    graph_name = os.environ.get("FALKOR_GRAPH", args.graph)
-    username = os.environ.get("FALKOR_USERNAME", args.username)
-    password = os.environ.get("FALKOR_PASSWORD", args.password)
+    host, port, graph_name, username, password = _get_db_env_values(args)
 
     db = FalkorDB(host=host, port=port, username=username, password=password)
     graph = db.select_graph(graph_name)
@@ -37,11 +43,7 @@ def get_db_connection(args: argparse.Namespace) -> tuple[FalkorDB, Any]:
 
 def cmd_validate(args: argparse.Namespace) -> None:
     """Run ABox validation."""
-    host = os.environ.get("FALKOR_HOST", args.host)
-    port = int(os.environ.get("FALKOR_PORT", str(args.port)))
-    graph_name = os.environ.get("FALKOR_GRAPH", args.graph)
-    username = os.environ.get("FALKOR_USERNAME", args.username)
-    password = os.environ.get("FALKOR_PASSWORD", args.password)
+    host, port, graph_name, username, password = _get_db_env_values(args)
 
     print(f"Running ABox validation against graph '{graph_name}'...")
     result = connect_and_run_latest_falkor_abox_validation(
@@ -66,11 +68,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
 
 def cmd_clear_abox(args: argparse.Namespace) -> None:
     """Clear ABox nodes."""
-    host = os.environ.get("FALKOR_HOST", args.host)
-    port = int(os.environ.get("FALKOR_PORT", str(args.port)))
-    graph_name = os.environ.get("FALKOR_GRAPH", args.graph)
-    username = os.environ.get("FALKOR_USERNAME", args.username)
-    password = os.environ.get("FALKOR_PASSWORD", args.password)
+    host, port, graph_name, username, password = _get_db_env_values(args)
 
     confirm = args.yes or input(f"Are you sure you want to clear ABox nodes in '{graph_name}'? [y/N]: ").lower().strip() == 'y'
     if not confirm:
@@ -290,11 +288,7 @@ def cmd_abox_upsert_node(args: argparse.Namespace) -> None:
             print(f"Error: Invalid JSON for properties: {e}", file=sys.stderr)
             sys.exit(1)
 
-    host = os.environ.get("FALKOR_HOST", args.host)
-    port = int(os.environ.get("FALKOR_PORT", str(args.port)))
-    graph_name = os.environ.get("FALKOR_GRAPH", args.graph)
-    username = os.environ.get("FALKOR_USERNAME", args.username)
-    password = os.environ.get("FALKOR_PASSWORD", args.password)
+    host, port, graph_name, username, password = _get_db_env_values(args)
 
     print(f"Upserting ABox node '{args.class_name}' with uuid '{args.uuid}'...")
     result = connect_and_upsert_abox_node(
@@ -337,11 +331,7 @@ def cmd_abox_upsert_relationship(args: argparse.Namespace) -> None:
 
 def cmd_abox_delete(args: argparse.Namespace) -> None:
     """Delete an ABox node or relationship by uuid."""
-    host = os.environ.get("FALKOR_HOST", args.host)
-    port = int(os.environ.get("FALKOR_PORT", str(args.port)))
-    graph_name = os.environ.get("FALKOR_GRAPH", args.graph)
-    username = os.environ.get("FALKOR_USERNAME", args.username)
-    password = os.environ.get("FALKOR_PASSWORD", args.password)
+    host, port, graph_name, username, password = _get_db_env_values(args)
 
     print(f"Deleting ABox element with uuid '{args.uuid}' from graph '{graph_name}'...")
     nodes_deleted, rels_deleted = connect_and_delete_abox_element(
@@ -402,11 +392,7 @@ def cmd_tbox_delete_relationship(args: argparse.Namespace) -> None:
 
 def cmd_db_dump(args: argparse.Namespace) -> None:
     """Dump FalkorDB graph to a file."""
-    host = os.environ.get("FALKOR_HOST", args.host)
-    port = int(os.environ.get("FALKOR_PORT", str(args.port)))
-    graph_name = os.environ.get("FALKOR_GRAPH", args.graph)
-    username = os.environ.get("FALKOR_USERNAME", args.username)
-    password = os.environ.get("FALKOR_PASSWORD", args.password)
+    host, port, graph_name, username, password = _get_db_env_values(args)
 
     print(f"Dumping graph '{graph_name}' to '{args.file}'...")
     try:
@@ -426,11 +412,7 @@ def cmd_db_dump(args: argparse.Namespace) -> None:
 
 def cmd_db_restore(args: argparse.Namespace) -> None:
     """Restore FalkorDB graph from a file."""
-    host = os.environ.get("FALKOR_HOST", args.host)
-    port = int(os.environ.get("FALKOR_PORT", str(args.port)))
-    graph_name = os.environ.get("FALKOR_GRAPH", args.graph)
-    username = os.environ.get("FALKOR_USERNAME", args.username)
-    password = os.environ.get("FALKOR_PASSWORD", args.password)
+    host, port, graph_name, username, password = _get_db_env_values(args)
 
     print(f"Restoring graph '{graph_name}' from '{args.file}'...")
     try:
