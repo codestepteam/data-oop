@@ -390,3 +390,43 @@ def test_cli_load_dotenv(tmp_path) -> None:
         os.environ.pop("FALKOR_HOST", None)
         os.environ.pop("FALKOR_PORT", None)
         os.environ.pop("FALKOR_PASSWORD", None)
+
+
+@patch("data_oop.cli.dump_graph_to_file")
+def test_cli_db_dump(mock_dump) -> None:
+    test_args = [
+        "data-oop",
+        "db-dump",
+        "--file", "test_out.dump"
+    ]
+    with patch.object(sys, "argv", test_args):
+        main()
+
+    mock_dump.assert_called_once_with(
+        filepath="test_out.dump",
+        graph_name="data_oop",
+        host="localhost",
+        port=6380,
+        username=None,
+        password=None
+    )
+
+
+@patch("data_oop.cli.restore_graph_from_file")
+def test_cli_db_restore(mock_restore) -> None:
+    test_args = [
+        "data-oop",
+        "db-restore",
+        "--file", "test_in.dump"
+    ]
+    with patch.object(sys, "argv", test_args):
+        main()
+
+    mock_restore.assert_called_once_with(
+        filepath="test_in.dump",
+        graph_name="data_oop",
+        host="localhost",
+        port=6380,
+        username=None,
+        password=None
+    )

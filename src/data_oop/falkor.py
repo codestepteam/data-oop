@@ -221,3 +221,49 @@ def load_tbox_to_falkor(
         constraint_edges=constraint_edges,
     )
 
+
+def dump_graph_to_file(
+    filepath: str,
+    *,
+    graph_name: str = "data_oop",
+    host: str = "localhost",
+    port: int = 6380,
+    username: str | None = None,
+    password: str | None = None,
+) -> None:
+    """Dump the serialized FalkorDB graph data key to a file."""
+    from falkordb import FalkorDB
+
+    db = FalkorDB(host=host, port=port, username=username, password=password)
+    if not db.connection.exists(graph_name):
+        raise ValueError(f"Graph '{graph_name}' does not exist in FalkorDB.")
+    
+    raw_data = db.connection.dump(graph_name)
+    if not raw_data:
+        raise ValueError(f"Failed to dump graph '{graph_name}' (returned empty data).")
+
+    with open(filepath, "wb") as f:
+        f.write(raw_data)
+
+
+def restore_graph_from_file(
+    filepath: str,
+    *,
+    graph_name: str = "data_oop",
+    host: str = "localhost",
+    port: int = 6380,
+    username: str | None = None,
+    password: str | None = None,
+) -> None:
+    """Restore a FalkorDB graph key from a serialized dump file, replacing the existing graph if present."""
+    from falkordb import FalkorDB
+
+    with open(filepath, "rb") as f:
+        raw_data = f.read()
+
+    if not raw_data:
+        raise ValueError(f"Dump file '{filepath}' is empty.")
+
+    db = FalkorDB(host=host, port=port, username=username, password=password)
+    db.connection.restore(graph_name, 0, raw_data, replace=True)
+

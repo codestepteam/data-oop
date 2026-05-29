@@ -17,6 +17,8 @@ from data_oop import (
     connect_and_upsert_abox_node,
     upsert_abox_relationship,
     connect_and_delete_abox_element,
+    dump_graph_to_file,
+    restore_graph_from_file,
 )
 
 
@@ -398,6 +400,54 @@ def cmd_tbox_delete_relationship(args: argparse.Namespace) -> None:
     print("Relationship deleted successfully.")
 
 
+def cmd_db_dump(args: argparse.Namespace) -> None:
+    """Dump FalkorDB graph to a file."""
+    host = os.environ.get("FALKOR_HOST", args.host)
+    port = int(os.environ.get("FALKOR_PORT", str(args.port)))
+    graph_name = os.environ.get("FALKOR_GRAPH", args.graph)
+    username = os.environ.get("FALKOR_USERNAME", args.username)
+    password = os.environ.get("FALKOR_PASSWORD", args.password)
+
+    print(f"Dumping graph '{graph_name}' to '{args.file}'...")
+    try:
+        dump_graph_to_file(
+            filepath=args.file,
+            graph_name=graph_name,
+            host=host,
+            port=port,
+            username=username,
+            password=password,
+        )
+        print("Graph dumped successfully.")
+    except Exception as e:
+        print(f"Error dumping graph: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_db_restore(args: argparse.Namespace) -> None:
+    """Restore FalkorDB graph from a file."""
+    host = os.environ.get("FALKOR_HOST", args.host)
+    port = int(os.environ.get("FALKOR_PORT", str(args.port)))
+    graph_name = os.environ.get("FALKOR_GRAPH", args.graph)
+    username = os.environ.get("FALKOR_USERNAME", args.username)
+    password = os.environ.get("FALKOR_PASSWORD", args.password)
+
+    print(f"Restoring graph '{graph_name}' from '{args.file}'...")
+    try:
+        restore_graph_from_file(
+            filepath=args.file,
+            graph_name=graph_name,
+            host=host,
+            port=port,
+            username=username,
+            password=password,
+        )
+        print("Graph restored successfully.")
+    except Exception as e:
+        print(f"Error restoring graph: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def load_dotenv(dotenv_path: str = ".env") -> None:
     """Load variables from a .env file into os.environ if it exists."""
     if not os.path.exists(dotenv_path):
@@ -541,6 +591,16 @@ def main() -> None:
     p_tbox_del_rel = subparsers.add_parser("tbox-delete-relationship", help="Delete a RelationshipDef in TBox")
     p_tbox_del_rel.add_argument("--id", required=True, help="ID of the RelationshipDef to delete")
     p_tbox_del_rel.set_defaults(func=cmd_tbox_delete_relationship)
+
+    # db-dump
+    p_db_dump = subparsers.add_parser("db-dump", help="Dump FalkorDB graph data to a file")
+    p_db_dump.add_argument("-f", "--file", required=True, help="Path to output dump file")
+    p_db_dump.set_defaults(func=cmd_db_dump)
+
+    # db-restore
+    p_db_restore = subparsers.add_parser("db-restore", help="Restore FalkorDB graph data from a dump file")
+    p_db_restore.add_argument("-f", "--file", required=True, help="Path to input dump file")
+    p_db_restore.set_defaults(func=cmd_db_restore)
 
     args = parser.parse_args()
 

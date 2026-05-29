@@ -5,7 +5,13 @@ from .exceptions import (
     TBoxNotFoundError,
     TBoxValidationError,
 )
-from .falkor import FalkorLoadResult, connect_and_load_tbox_to_falkor, load_tbox_to_falkor
+from .falkor import (
+    FalkorLoadResult,
+    connect_and_load_tbox_to_falkor,
+    load_tbox_to_falkor,
+    dump_graph_to_file,
+    restore_graph_from_file,
+)
 from .falkor_repository import FalkorTBoxRepository
 from .falkor_abox import (
     ABoxNodeResult,
@@ -89,4 +95,6 @@ __all__ = [
     "save_workflow",
     "run_workflow",
     "WorkflowBuilder",
+    "dump_graph_to_file",
+    "restore_graph_from_file",
 ]
