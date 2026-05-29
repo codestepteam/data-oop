@@ -125,7 +125,7 @@ def cmd_inspect(args: argparse.Namespace) -> None:
     _, graph = get_db_connection(args)
     repo = FalkorTBoxRepository(graph)
 
-    print(f"=== Inspecting TBox Graph: {args.graph} ===")
+    print(f"=== Inspecting TBox Graph: {graph.name} ===")
     
     classes = repo.list_classes()
     print(f"\n[Classes] ({len(classes)})")

@@ -3,7 +3,18 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from data_oop.cli import main
+
+
+@pytest.fixture(autouse=True)
+def mock_load_dotenv(request):
+    if request.node.name == "test_cli_load_dotenv":
+        yield
+    else:
+        with patch("data_oop.cli.load_dotenv", return_value=None):
+            yield
 
 
 @patch("data_oop.cli.connect_and_run_latest_falkor_abox_validation")
