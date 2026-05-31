@@ -4,12 +4,14 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from .models import (
     ClassDef,
+    ConnectorDef,
     ConstraintDef,
     EffectivePropertyDef,
     InterfaceDef,
     PropertyBinding,
     PropertyDef,
     RelationshipDef,
+    SourceBinding,
 )
 
 
@@ -259,3 +261,40 @@ class TBoxRepository(Protocol):
         target_id: str | None = None,
         kind: str | None = None,
     ) -> list[ConstraintDef]: ...
+
+    # Connector
+    def define_connector(
+        self,
+        name: str,
+        *,
+        kind: Literal["mysql", "postgres"] = "postgres",
+        dsn_ref: str = "",
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        merge: bool = True,
+    ) -> ConnectorDef: ...
+
+    def get_connector(self, name: str) -> ConnectorDef | None: ...
+
+    def list_connectors(self) -> list[ConnectorDef]: ...
+
+    def delete_connector(self, name: str, *, detach: bool = False) -> None: ...
+
+    # Source binding (class <- RDB query)
+    def attach_source_binding_to_class(
+        self,
+        *,
+        class_name: str,
+        connector_name: str,
+        sql: str,
+        key_columns: tuple[str, ...],
+        column_map: dict[str, str] | None = None,
+        materialization: Literal["materialized", "virtual"] = "materialized",
+        refresh_interval_hours: int | None = None,
+    ) -> SourceBinding: ...
+
+    def get_source_binding(self, class_name: str) -> SourceBinding | None: ...
+
+    def detach_source_binding_from_class(self, class_name: str) -> None: ...
+
+    def list_source_bindings(self) -> list[SourceBinding]: ...

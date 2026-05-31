@@ -1,6 +1,6 @@
 [project]
 name = "data-oop"
-version = "0.1.0"
+version = "0.1.1"
 description = "Dynamic TBox ontology definition and validation library"
 readme = "AGENTS.md"
 requires-python = ">=3.11"
@@ -17,6 +17,15 @@ data-oop = "data_oop.cli:main"
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3.0",
+]
+postgres = [
+  "psycopg[binary]>=3.1",
+]
+mysql = [
+  "PyMySQL>=1.1",
+]
+bigquery = [
+  "google-cloud-bigquery>=3.0",
 ]
 
 [build-system]

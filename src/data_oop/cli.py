@@ -13,6 +13,7 @@ from data_oop import (
     FalkorTBoxRepository,
     connect_and_clear_abox_nodes,
     connect_and_run_latest_falkor_abox_validation,
+    materialize_source,
     run_workflow,
     connect_and_upsert_abox_node,
     upsert_abox_relationship,
@@ -20,6 +21,17 @@ from data_oop import (
     dump_graph_to_file,
     restore_graph_from_file,
 )
+
+
+def _read_sql_arg(value: str) -> str:
+    """Return SQL text. A leading '@' reads from a file (avoids shell-quoting long SQL)."""
+    if value.startswith("@"):
+        path = Path(value[1:]).resolve()
+        if not path.exists():
+            print(f"Error: SQL file not found: {path}", file=sys.stderr)
+            sys.exit(1)
+        return path.read_text(encoding="utf-8")
+    return value
 
 
 def _get_db_env_values(args: argparse.Namespace) -> tuple[str, int, str, str | None, str | None]:
@@ -430,6 +442,112 @@ def cmd_db_restore(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_define_connector(args: argparse.Namespace) -> None:
+    """Define an external RDB connector (stores only an env-var reference, no secrets)."""
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+
+    metadata = {}
+    if args.metadata:
+        try:
+            metadata = json.loads(args.metadata)
+        except json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON for metadata: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    print(f"Defining connector '{args.name}' (kind={args.kind})...")
+    repo.define_connector(
+        name=args.name,
+        kind=args.kind,
+        dsn_ref=args.dsn_ref or "",
+        description=args.description,
+        metadata=metadata,
+    )
+    print("Connector defined successfully.")
+
+
+def cmd_list_connectors(args: argparse.Namespace) -> None:
+    """List defined connectors and their source bindings."""
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+
+    connectors = repo.list_connectors()
+    print(f"[Connectors] ({len(connectors)})")
+    for c in connectors:
+        print(f"  - {c.name} (kind={c.kind}, dsn_ref={c.dsn_ref or 'None'}) - {c.description or ''}")
+
+    bindings = repo.list_source_bindings()
+    print(f"\n[Source bindings] ({len(bindings)})")
+    for b in bindings:
+        print(
+            f"  - {b.class_name} <- {b.connector_name} "
+            f"[keys={','.join(b.key_columns)}, {b.materialization}]"
+        )
+
+
+def cmd_delete_connector(args: argparse.Namespace) -> None:
+    """Delete a connector (blocked while classes are bound unless --detach)."""
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+
+    print(f"Deleting connector '{args.name}' (detach={args.detach})...")
+    repo.delete_connector(args.name, detach=args.detach)
+    print("Connector deleted successfully.")
+
+
+def cmd_bind_source(args: argparse.Namespace) -> None:
+    """Bind a class to an RDB query that produces its aggregate/segment instances."""
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+
+    column_map = {}
+    if args.column_map:
+        try:
+            column_map = json.loads(args.column_map)
+        except json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON for column-map: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    key_columns = tuple(c.strip() for c in args.key_columns.split(",") if c.strip())
+    if not key_columns:
+        print("Error: --key-columns must list at least one column", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Binding class '{args.class_name}' to connector '{args.connector}'...")
+    repo.attach_source_binding_to_class(
+        class_name=args.class_name,
+        connector_name=args.connector,
+        sql=_read_sql_arg(args.sql),
+        key_columns=key_columns,
+        column_map=column_map,
+        materialization=args.materialization,
+        refresh_interval_hours=args.refresh_interval_hours,
+    )
+    print("Source binding attached successfully.")
+
+
+def cmd_sync_source(args: argparse.Namespace) -> None:
+    """Run a class's bound RDB query and materialize result rows as ABox nodes."""
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+
+    print(f"Syncing source-backed class '{args.class_name}' (prune={not args.no_prune})...")
+    try:
+        result = materialize_source(
+            repo=repo,
+            graph=graph,
+            class_name=args.class_name,
+            prune=not args.no_prune,
+        )
+    except Exception as e:
+        print(f"Error syncing source: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(
+        f"Sync done: fetched={result.rows_fetched}, upserted={result.nodes_upserted}, "
+        f"pruned={result.nodes_pruned}, synced_at={result.synced_at}"
+    )
+
+
 def load_dotenv(dotenv_path: str = ".env") -> None:
     """Load variables from a .env file into os.environ if it exists."""
     if not os.path.exists(dotenv_path):
@@ -572,6 +690,42 @@ def main() -> None:
     p_tbox_del_rel = subparsers.add_parser("tbox-delete-relationship", help="Delete a RelationshipDef in TBox")
     p_tbox_del_rel.add_argument("--id", required=True, help="ID of the RelationshipDef to delete")
     p_tbox_del_rel.set_defaults(func=cmd_tbox_delete_relationship)
+
+    # define-connector
+    p_def_conn = subparsers.add_parser("define-connector", help="Define an external RDB connector (env-var reference only, no secrets)")
+    p_def_conn.add_argument("--name", required=True, help="Connector name")
+    p_def_conn.add_argument("--kind", choices=["postgres", "mysql", "bigquery"], default="postgres", help="Connector kind (default: postgres)")
+    p_def_conn.add_argument("--dsn-ref", help="Name of the env var holding the DSN (postgres/mysql)")
+    p_def_conn.add_argument("--description", help="Description")
+    p_def_conn.add_argument("--metadata", help="JSON metadata (e.g. bigquery {\"project\":..,\"credentials_ref\":..})")
+    p_def_conn.set_defaults(func=cmd_define_connector)
+
+    # list-connectors
+    p_list_conn = subparsers.add_parser("list-connectors", help="List connectors and source bindings")
+    p_list_conn.set_defaults(func=cmd_list_connectors)
+
+    # delete-connector
+    p_del_conn = subparsers.add_parser("delete-connector", help="Delete a connector")
+    p_del_conn.add_argument("--name", required=True, help="Connector name")
+    p_del_conn.add_argument("--detach", action="store_true", help="Drop source bindings using it first")
+    p_del_conn.set_defaults(func=cmd_delete_connector)
+
+    # bind-source
+    p_bind = subparsers.add_parser("bind-source", help="Bind a class to an RDB query (aggregates/segments)")
+    p_bind.add_argument("--class-name", required=True, help="Source-backed ClassDef name")
+    p_bind.add_argument("--connector", required=True, help="Connector name")
+    p_bind.add_argument("--sql", required=True, help="SQL text, or @path to read from a file")
+    p_bind.add_argument("--key-columns", required=True, help="Comma-separated business key columns")
+    p_bind.add_argument("--column-map", help="JSON mapping of sql_column -> class property")
+    p_bind.add_argument("--materialization", choices=["materialized", "virtual"], default="materialized", help="Default: materialized")
+    p_bind.add_argument("--refresh-interval-hours", type=int, help="Freshness hint (hours)")
+    p_bind.set_defaults(func=cmd_bind_source)
+
+    # sync-source
+    p_sync = subparsers.add_parser("sync-source", help="Run a class's bound query and materialize result rows as ABox nodes")
+    p_sync.add_argument("--class-name", required=True, help="Source-backed ClassDef name")
+    p_sync.add_argument("--no-prune", action="store_true", help="Keep previously synced nodes instead of replacing")
+    p_sync.set_defaults(func=cmd_sync_source)
 
     # db-dump
     p_db_dump = subparsers.add_parser("db-dump", help="Dump FalkorDB graph data to a file (graph specified by global --graph option)")

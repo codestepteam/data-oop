@@ -30,6 +30,11 @@ from .falkor_validation import (
     run_latest_falkor_abox_validation,
     store_latest_validation_report,
 )
+from .connectors import fetch_rows, get_executor, register_executor
+from .sync import (
+    connect_and_materialize_source,
+    materialize_source,
+)
 from .workflows import save_workflow, run_workflow, WorkflowBuilder
 from .dsl import (
     ClassBuilder,
@@ -38,14 +43,17 @@ from .dsl import (
 from .memory import InMemoryTBoxRepository
 from .models import (
     ClassDef,
+    ConnectorDef,
     ConstraintDef,
     EffectiveClassSchema,
     EffectivePropertyDef,
     EffectiveRelationshipSchema,
     InterfaceDef,
+    MaterializeResult,
     PropertyBinding,
     PropertyDef,
     RelationshipDef,
+    SourceBinding,
     ValidationIssue,
     ValidationReport,
 )
@@ -54,6 +62,14 @@ from .validator import SUPPORTED_DATATYPES, TBoxValidator
 
 __all__ = [
     "ClassDef",
+    "ConnectorDef",
+    "SourceBinding",
+    "MaterializeResult",
+    "materialize_source",
+    "connect_and_materialize_source",
+    "register_executor",
+    "get_executor",
+    "fetch_rows",
     "ConstraintDef",
     "EffectiveClassSchema",
     "EffectivePropertyDef",

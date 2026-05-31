@@ -8,6 +8,7 @@ from .exceptions import TBoxAlreadyExistsError, TBoxConflictError, TBoxNotFoundE
 from .falkor import FalkorGraph
 from .models import (
     ClassDef,
+    ConnectorDef,
     ConstraintDef,
     EffectivePropertyDef,
     InterfaceDef,
@@ -15,7 +16,7 @@ from .models import (
     PropertyBinding,
     PropertyDef,
     RelationshipDef,
-    TargetKind,
+    SourceBinding,
 )
 
 
@@ -84,6 +85,12 @@ class FalkorTBoxRepository:
         if not const:
             raise TBoxNotFoundError(f"ConstraintDef not found: {id}")
         return const
+
+    def _require_connector(self, name: str) -> ConnectorDef:
+        connector = self.get_connector(name)
+        if not connector:
+            raise TBoxNotFoundError(f"ConnectorDef not found: {name}")
+        return connector
 
     def _require_owner(self, owner_kind: OwnerKind, owner_id: str) -> None:
         if owner_kind == "class":
@@ -212,6 +219,13 @@ class FalkorTBoxRepository:
             )
             for row in rel_rows:
                 self.delete_relationship(row[0], detach=True)
+
+        # Source binding lives on the HAS_CONNECTOR edge owned by this class; drop it
+        # unconditionally so the node delete below never trips over a dangling edge.
+        self._query(
+            "MATCH (c:ClassDef {name: $name})-[r:HAS_CONNECTOR]->() DELETE r",
+            {"name": name},
+        )
 
         self._query("MATCH (c:TBox:ClassDef {name: $name}) DELETE c", {"name": name})
 
@@ -1465,3 +1479,233 @@ class FalkorTBoxRepository:
             for row in rows
         ]
         return sorted(constraints, key=lambda value: value.id)
+
+    # ------------------------------------------------------------------
+    # Connector
+    # ------------------------------------------------------------------
+    def define_connector(
+        self,
+        name: str,
+        *,
+        kind: Literal["mysql", "postgres"] = "postgres",
+        dsn_ref: str = "",
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        merge: bool = True,
+    ) -> ConnectorDef:
+        existing = self.get_connector(name)
+        if existing:
+            if not merge:
+                raise TBoxAlreadyExistsError(f"ConnectorDef already exists: {name}")
+            new_dsn_ref = dsn_ref if dsn_ref else existing.dsn_ref
+            new_description = description if description is not None else existing.description
+            merged_metadata = dict(existing.metadata)
+            if metadata:
+                merged_metadata.update(metadata)
+            self._query(
+                """
+                MATCH (n:TBox:ConnectorDef {name: $name})
+                SET n.kind = $kind,
+                    n.dsnRef = $dsn_ref,
+                    n.description = $description,
+                    n.metadata = $metadata
+                """,
+                {
+                    "name": name,
+                    "kind": kind,
+                    "dsn_ref": new_dsn_ref,
+                    "description": new_description,
+                    "metadata": self._json(merged_metadata),
+                },
+            )
+            return ConnectorDef(
+                name=name,
+                kind=kind,
+                dsn_ref=new_dsn_ref,
+                description=new_description,
+                metadata=merged_metadata,
+            )
+
+        uuid = self._stable_uuid("ConnectorDef", name)
+        self._query(
+            """
+            CREATE (n:TBox:ConnectorDef {
+                name: $name,
+                uuid: $uuid,
+                kind: $kind,
+                dsnRef: $dsn_ref,
+                description: $description,
+                metadata: $metadata
+            })
+            """,
+            {
+                "name": name,
+                "uuid": uuid,
+                "kind": kind,
+                "dsn_ref": dsn_ref,
+                "description": description,
+                "metadata": self._json(metadata or {}),
+            },
+        )
+        return ConnectorDef(
+            name=name,
+            kind=kind,
+            dsn_ref=dsn_ref,
+            description=description,
+            metadata=metadata or {},
+        )
+
+    def get_connector(self, name: str) -> ConnectorDef | None:
+        rows = self._query(
+            "MATCH (n:TBox:ConnectorDef {name: $name}) RETURN n.name, n.kind, n.dsnRef, n.description, n.metadata",
+            {"name": name},
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        return ConnectorDef(
+            name=row[0],
+            kind=row[1],
+            dsn_ref=row[2] or "",
+            description=row[3],
+            metadata=self._parse_json(row[4]),
+        )
+
+    def list_connectors(self) -> list[ConnectorDef]:
+        rows = self._query(
+            "MATCH (n:TBox:ConnectorDef) RETURN n.name, n.kind, n.dsnRef, n.description, n.metadata"
+        )
+        connectors = [
+            ConnectorDef(
+                name=row[0],
+                kind=row[1],
+                dsn_ref=row[2] or "",
+                description=row[3],
+                metadata=self._parse_json(row[4]),
+            )
+            for row in rows
+        ]
+        return sorted(connectors, key=lambda value: value.name)
+
+    def delete_connector(self, name: str, *, detach: bool = False) -> None:
+        self._require_connector(name)
+        rows = self._query(
+            "MATCH (:ClassDef)-[e:HAS_CONNECTOR]->(k:ConnectorDef {name: $name}) RETURN count(e)",
+            {"name": name},
+        )
+        has_ref = bool(rows and int(rows[0][0]) > 0)
+        if has_ref and not detach:
+            raise TBoxConflictError(f"ConnectorDef has source bindings: {name}")
+        # Edges must go before the node delete regardless of detach, else FalkorDB
+        # refuses to delete a node that still has relationships.
+        self._query(
+            "MATCH (:ClassDef)-[e:HAS_CONNECTOR]->(k:ConnectorDef {name: $name}) DELETE e",
+            {"name": name},
+        )
+        self._query("MATCH (k:TBox:ConnectorDef {name: $name}) DELETE k", {"name": name})
+
+    # ------------------------------------------------------------------
+    # Source binding (class <- RDB query)
+    # ------------------------------------------------------------------
+    def attach_source_binding_to_class(
+        self,
+        *,
+        class_name: str,
+        connector_name: str,
+        sql: str,
+        key_columns: tuple[str, ...],
+        column_map: dict[str, str] | None = None,
+        materialization: Literal["materialized", "virtual"] = "materialized",
+        refresh_interval_hours: int | None = None,
+    ) -> SourceBinding:
+        self._require_class(class_name)
+        self._require_connector(connector_name)
+        if not key_columns:
+            raise TBoxConflictError(
+                f"SourceBinding requires at least one key column: {class_name}"
+            )
+        # A class carries at most one source binding; clear any prior edge first so a
+        # connector change doesn't leave two HAS_CONNECTOR edges behind.
+        self._query(
+            "MATCH (c:ClassDef {name: $class_name})-[e:HAS_CONNECTOR]->() DELETE e",
+            {"class_name": class_name},
+        )
+        self._query(
+            """
+            MATCH (c:TBox:ClassDef {name: $class_name})
+            MATCH (k:TBox:ConnectorDef {name: $connector_name})
+            MERGE (c)-[e:HAS_CONNECTOR]->(k)
+            SET e.sql = $sql,
+                e.keyColumns = $key_columns,
+                e.columnMap = $column_map,
+                e.materialization = $materialization,
+                e.refreshIntervalHours = $refresh_interval_hours
+            """,
+            {
+                "class_name": class_name,
+                "connector_name": connector_name,
+                "sql": sql,
+                "key_columns": list(key_columns),
+                "column_map": self._json(column_map or {}),
+                "materialization": materialization,
+                "refresh_interval_hours": refresh_interval_hours,
+            },
+        )
+        return SourceBinding(
+            class_name=class_name,
+            connector_name=connector_name,
+            sql=sql,
+            key_columns=tuple(key_columns),
+            column_map=dict(column_map or {}),
+            materialization=materialization,
+            refresh_interval_hours=refresh_interval_hours,
+        )
+
+    def get_source_binding(self, class_name: str) -> SourceBinding | None:
+        rows = self._query(
+            """
+            MATCH (c:TBox:ClassDef {name: $class_name})-[e:HAS_CONNECTOR]->(k:TBox:ConnectorDef)
+            RETURN k.name, e.sql, e.keyColumns, e.columnMap, e.materialization, e.refreshIntervalHours
+            """,
+            {"class_name": class_name},
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        return SourceBinding(
+            class_name=class_name,
+            connector_name=row[0],
+            sql=row[1],
+            key_columns=tuple(row[2] or []),
+            column_map=self._parse_json(row[3]),
+            materialization=row[4] or "materialized",
+            refresh_interval_hours=row[5],
+        )
+
+    def detach_source_binding_from_class(self, class_name: str) -> None:
+        self._require_class(class_name)
+        self._query(
+            "MATCH (c:ClassDef {name: $class_name})-[e:HAS_CONNECTOR]->() DELETE e",
+            {"class_name": class_name},
+        )
+
+    def list_source_bindings(self) -> list[SourceBinding]:
+        rows = self._query(
+            """
+            MATCH (c:TBox:ClassDef)-[e:HAS_CONNECTOR]->(k:TBox:ConnectorDef)
+            RETURN c.name, k.name, e.sql, e.keyColumns, e.columnMap, e.materialization, e.refreshIntervalHours
+            """
+        )
+        bindings = [
+            SourceBinding(
+                class_name=row[0],
+                connector_name=row[1],
+                sql=row[2],
+                key_columns=tuple(row[3] or []),
+                column_map=self._parse_json(row[4]),
+                materialization=row[5] or "materialized",
+                refresh_interval_hours=row[6],
+            )
+            for row in rows
+        ]
+        return sorted(bindings, key=lambda value: value.class_name)

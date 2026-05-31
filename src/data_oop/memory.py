@@ -5,6 +5,7 @@ from typing import Any, Literal
 from .exceptions import TBoxAlreadyExistsError, TBoxConflictError, TBoxNotFoundError
 from .models import (
     ClassDef,
+    ConnectorDef,
     ConstraintDef,
     EffectivePropertyDef,
     InterfaceDef,
@@ -12,6 +13,7 @@ from .models import (
     PropertyBinding,
     PropertyDef,
     RelationshipDef,
+    SourceBinding,
     TargetKind,
 )
 
@@ -31,6 +33,8 @@ class InMemoryTBoxRepository:
         self._constraints: dict[str, ConstraintDef] = {}
         self._implements: set[tuple[str, str]] = set()
         self._property_bindings: dict[tuple[OwnerKind, str, str], PropertyBinding] = {}
+        self._connectors: dict[str, ConnectorDef] = {}
+        self._source_bindings: dict[str, SourceBinding] = {}
 
     # ------------------------------------------------------------------
     # helpers
@@ -68,6 +72,11 @@ class InMemoryTBoxRepository:
         if id not in self._constraints:
             raise TBoxNotFoundError(f"ConstraintDef not found: {id}")
         return self._constraints[id]
+
+    def _require_connector(self, name: str) -> ConnectorDef:
+        if name not in self._connectors:
+            raise TBoxNotFoundError(f"ConnectorDef not found: {name}")
+        return self._connectors[name]
 
     def _require_target(self, target_kind: TargetKind, target_id: str) -> None:
         if target_kind == "class":
@@ -224,6 +233,7 @@ class InMemoryTBoxRepository:
             if relationship.from_class == name or relationship.to_class == name
         ]:
             self.delete_relationship(relationship_id, detach=True)
+        self._source_bindings.pop(name, None)
         del self._classes[name]
 
     def list_classes(
@@ -1008,3 +1018,105 @@ class InMemoryTBoxRepository:
         if kind is not None:
             constraints = [constraint for constraint in constraints if constraint.kind == kind]
         return sorted(constraints, key=lambda value: value.id)
+
+    # ------------------------------------------------------------------
+    # Connector
+    # ------------------------------------------------------------------
+    def define_connector(
+        self,
+        name: str,
+        *,
+        kind: Literal["mysql", "postgres"] = "postgres",
+        dsn_ref: str = "",
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        merge: bool = True,
+    ) -> ConnectorDef:
+        if name in self._connectors:
+            if not merge:
+                raise TBoxAlreadyExistsError(f"ConnectorDef already exists: {name}")
+            existing = self._connectors[name]
+            updated = ConnectorDef(
+                name=name,
+                kind=kind,
+                dsn_ref=dsn_ref if dsn_ref else existing.dsn_ref,
+                description=description if description is not None else existing.description,
+                metadata=self._merge_metadata(existing.metadata, metadata),
+            )
+            self._connectors[name] = updated
+            return updated
+
+        connector = ConnectorDef(
+            name=name,
+            kind=kind,
+            dsn_ref=dsn_ref,
+            description=description,
+            metadata=dict(metadata or {}),
+        )
+        self._connectors[name] = connector
+        return connector
+
+    def get_connector(self, name: str) -> ConnectorDef | None:
+        return self._connectors.get(name)
+
+    def list_connectors(self) -> list[ConnectorDef]:
+        return sorted(self._connectors.values(), key=lambda value: value.name)
+
+    def delete_connector(self, name: str, *, detach: bool = False) -> None:
+        self._require_connector(name)
+        bound = [
+            binding
+            for binding in self._source_bindings.values()
+            if binding.connector_name == name
+        ]
+        if bound and not detach:
+            raise TBoxConflictError(f"ConnectorDef has source bindings: {name}")
+        if detach:
+            self._source_bindings = {
+                class_name: binding
+                for class_name, binding in self._source_bindings.items()
+                if binding.connector_name != name
+            }
+        del self._connectors[name]
+
+    # ------------------------------------------------------------------
+    # Source binding
+    # ------------------------------------------------------------------
+    def attach_source_binding_to_class(
+        self,
+        *,
+        class_name: str,
+        connector_name: str,
+        sql: str,
+        key_columns: tuple[str, ...],
+        column_map: dict[str, str] | None = None,
+        materialization: Literal["materialized", "virtual"] = "materialized",
+        refresh_interval_hours: int | None = None,
+    ) -> SourceBinding:
+        self._require_class(class_name)
+        self._require_connector(connector_name)
+        if not key_columns:
+            raise TBoxConflictError(
+                f"SourceBinding requires at least one key column: {class_name}"
+            )
+        binding = SourceBinding(
+            class_name=class_name,
+            connector_name=connector_name,
+            sql=sql,
+            key_columns=tuple(key_columns),
+            column_map=dict(column_map or {}),
+            materialization=materialization,
+            refresh_interval_hours=refresh_interval_hours,
+        )
+        self._source_bindings[class_name] = binding
+        return binding
+
+    def get_source_binding(self, class_name: str) -> SourceBinding | None:
+        return self._source_bindings.get(class_name)
+
+    def detach_source_binding_from_class(self, class_name: str) -> None:
+        self._require_class(class_name)
+        self._source_bindings.pop(class_name, None)
+
+    def list_source_bindings(self) -> list[SourceBinding]:
+        return sorted(self._source_bindings.values(), key=lambda value: value.class_name)

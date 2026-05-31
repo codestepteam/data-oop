@@ -9,6 +9,9 @@ Severity = Literal["info", "warning", "error"]
 ValidationTargetKind = Literal[
     "class", "interface", "property", "relationship", "constraint", "edge"
 ]
+ConnectorKind = Literal["mysql", "postgres", "bigquery"]
+# "virtual" is reserved for a future lazy-federation tier; only "materialized" is wired today.
+Materialization = Literal["materialized", "virtual"]
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,52 @@ class ConstraintDef:
     severity: Severity = "error"
     description: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ConnectorDef:
+    """A reference to an external relational data source.
+
+    ``dsn_ref`` is the NAME of an environment variable holding the real DSN/credentials
+    (e.g. "PROD_DB_DSN") — never the literal connection string. Nothing secret is stored
+    in the graph, so dumps and restores carry no credentials.
+    """
+
+    name: str
+    kind: ConnectorKind = "postgres"
+    dsn_ref: str = ""
+    description: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SourceBinding:
+    """Binds a TBox class to an RDB query that produces its aggregate/segment instances.
+
+    Each result row of ``sql`` becomes one ABox node of ``class_name``. ``key_columns``
+    forms the business identity used to keep re-sync idempotent. ``column_map`` renames
+    SQL result columns to class property names (identity mapping when empty).
+    """
+
+    class_name: str
+    connector_name: str
+    sql: str
+    key_columns: tuple[str, ...] = ()
+    column_map: dict[str, str] = field(default_factory=dict)
+    materialization: Materialization = "materialized"
+    refresh_interval_hours: int | None = None
+
+
+@dataclass(frozen=True)
+class MaterializeResult:
+    """Outcome of materializing a source-backed class from its RDB query."""
+
+    class_name: str
+    connector_name: str
+    rows_fetched: int
+    nodes_upserted: int
+    nodes_pruned: int
+    synced_at: str
 
 
 @dataclass(frozen=True)
