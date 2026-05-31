@@ -6,6 +6,7 @@ from data_oop import (
     FalkorTBoxRepository,
     InMemoryTBoxRepository,
     SourceBinding,
+    SourceLink,
     TBoxConflictError,
     TBoxNotFoundError,
 )
@@ -142,6 +143,27 @@ def test_delete_connector_blocked_while_bound(repo) -> None:
     repo.delete_connector("prod_pg", detach=True)
     assert repo.get_connector("prod_pg") is None
     assert repo.get_source_binding("ProductRevenue") is None
+
+
+def test_source_binding_links_round_trip(repo) -> None:
+    _seed(repo)
+    repo.attach_source_binding_to_class(
+        class_name="ProductRevenue",
+        connector_name="prod_pg",
+        sql="SELECT 1",
+        key_columns=("product_id",),
+        links=(
+            SourceLink(relationship_name="OF_PRODUCT", to_class="Product", local_key="product_id"),
+        ),
+    )
+    binding = repo.get_source_binding("ProductRevenue")
+    assert len(binding.links) == 1
+    link = binding.links[0]
+    assert link.relationship_name == "OF_PRODUCT"
+    assert link.to_class == "Product"
+    assert link.local_key == "product_id"
+    assert link.target_property == "product_id"  # defaulted from local_key
+    assert link.direction == "out"
 
 
 def test_detach_source_binding(repo) -> None:

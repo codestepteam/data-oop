@@ -54,6 +54,7 @@ from .models import (
     PropertyDef,
     RelationshipDef,
     SourceBinding,
+    SourceLink,
     ValidationIssue,
     ValidationReport,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "ClassDef",
     "ConnectorDef",
     "SourceBinding",
+    "SourceLink",
     "MaterializeResult",
     "materialize_source",
     "connect_and_materialize_source",

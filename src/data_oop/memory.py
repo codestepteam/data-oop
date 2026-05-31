@@ -14,8 +14,23 @@ from .models import (
     PropertyDef,
     RelationshipDef,
     SourceBinding,
+    SourceLink,
     TargetKind,
 )
+
+
+def _normalize_links(links: tuple[SourceLink, ...]) -> tuple[SourceLink, ...]:
+    """Default each link's target_property to its local_key when left blank."""
+    return tuple(
+        link if link.target_property else SourceLink(
+            relationship_name=link.relationship_name,
+            to_class=link.to_class,
+            local_key=link.local_key,
+            target_property=link.local_key,
+            direction=link.direction,
+        )
+        for link in links
+    )
 
 
 class InMemoryTBoxRepository:
@@ -1092,6 +1107,7 @@ class InMemoryTBoxRepository:
         column_map: dict[str, str] | None = None,
         materialization: Literal["materialized", "virtual"] = "materialized",
         refresh_interval_hours: int | None = None,
+        links: tuple[SourceLink, ...] = (),
     ) -> SourceBinding:
         self._require_class(class_name)
         self._require_connector(connector_name)
@@ -1107,6 +1123,7 @@ class InMemoryTBoxRepository:
             column_map=dict(column_map or {}),
             materialization=materialization,
             refresh_interval_hours=refresh_interval_hours,
+            links=_normalize_links(tuple(links)),
         )
         self._source_bindings[class_name] = binding
         return binding

@@ -100,13 +100,34 @@ class ConnectorDef:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+LinkDirection = Literal["out", "in"]
+
+
+@dataclass(frozen=True)
+class SourceLink:
+    """Wires a materialized source row to an existing graph node via a relationship.
+
+    For each synced row, the value of ``local_key`` is matched against ``target_property``
+    on a ``to_class`` node, then a ``relationship_name`` edge is MERGEd. ``direction="out"``
+    means source -[rel]-> target; ``"in"`` means target -[rel]-> source. The relationship
+    must already be defined in the TBox.
+    """
+
+    relationship_name: str
+    to_class: str
+    local_key: str
+    target_property: str = ""  # defaults to local_key when blank
+    direction: LinkDirection = "out"
+
+
 @dataclass(frozen=True)
 class SourceBinding:
     """Binds a TBox class to an RDB query that produces its aggregate/segment instances.
 
     Each result row of ``sql`` becomes one ABox node of ``class_name``. ``key_columns``
     forms the business identity used to keep re-sync idempotent. ``column_map`` renames
-    SQL result columns to class property names (identity mapping when empty).
+    SQL result columns to class property names (identity mapping when empty). ``links``
+    optionally wires each row to existing nodes via relationships.
     """
 
     class_name: str
@@ -116,6 +137,7 @@ class SourceBinding:
     column_map: dict[str, str] = field(default_factory=dict)
     materialization: Materialization = "materialized"
     refresh_interval_hours: int | None = None
+    links: tuple[SourceLink, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -128,6 +150,8 @@ class MaterializeResult:
     nodes_upserted: int
     nodes_pruned: int
     synced_at: str
+    edges_upserted: int = 0
+    links_missing: int = 0
 
 
 @dataclass(frozen=True)

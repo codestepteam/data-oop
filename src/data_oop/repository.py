@@ -12,6 +12,7 @@ from .models import (
     PropertyDef,
     RelationshipDef,
     SourceBinding,
+    SourceLink,
 )
 
 
@@ -291,6 +292,7 @@ class TBoxRepository(Protocol):
         column_map: dict[str, str] | None = None,
         materialization: Literal["materialized", "virtual"] = "materialized",
         refresh_interval_hours: int | None = None,
+        links: tuple[SourceLink, ...] = (),
     ) -> SourceBinding: ...
 
     def get_source_binding(self, class_name: str) -> SourceBinding | None: ...

@@ -3,9 +3,11 @@ from falkordb import FalkorDB
 
 from data_oop import (
     FalkorTBoxRepository,
+    SourceLink,
     TBoxNotFoundError,
     materialize_source,
     register_executor,
+    upsert_abox_node,
 )
 
 # A controllable in-test executor: each test sets _ROWS, the executor returns them.
@@ -135,3 +137,74 @@ def test_materialize_without_binding_raises(graph):
     r.create_class("Lonely")
     with pytest.raises(TBoxNotFoundError):
         materialize_source(repo=r, graph=graph, class_name="Lonely")
+
+
+def _setup_inventory_with_link(graph):
+    """Product nodes exist; Inventory is source-backed and links to Product by product_id."""
+    repo = FalkorTBoxRepository(graph)
+    repo.create_class("Product")
+    repo.create_class("Inventory")
+    repo.define_relationship(name="OF_PRODUCT", from_class="Inventory", to_class="Product")
+    repo.define_connector("fake_db", kind="fake", dsn_ref="")
+    upsert_abox_node(graph=graph, class_name="Product", uuid="p1", properties={"product_id": 1})
+    upsert_abox_node(graph=graph, class_name="Product", uuid="p2", properties={"product_id": 2})
+    repo.attach_source_binding_to_class(
+        class_name="Inventory",
+        connector_name="fake_db",
+        sql="SELECT sku, product_id, qty FROM inventory",
+        key_columns=("sku",),
+        links=(
+            SourceLink(relationship_name="OF_PRODUCT", to_class="Product", local_key="product_id"),
+        ),
+    )
+    return repo
+
+
+def test_sync_links_rows_to_existing_nodes(graph):
+    global _ROWS
+    repo = _setup_inventory_with_link(graph)
+    _ROWS = [
+        {"sku": "A", "product_id": 1, "qty": 10},
+        {"sku": "B", "product_id": 2, "qty": 5},
+    ]
+
+    result = materialize_source(repo=repo, graph=graph, class_name="Inventory")
+
+    assert result.nodes_upserted == 2
+    assert result.edges_upserted == 2
+    assert result.links_missing == 0
+    edges = graph.query(
+        "MATCH (i:Inventory)-[:OF_PRODUCT]->(p:Product) RETURN i.sku, p.product_id ORDER BY i.sku"
+    ).result_set
+    assert edges == [["A", 1], ["B", 2]]
+
+
+def test_sync_link_missing_target_counted_not_fatal(graph):
+    global _ROWS
+    repo = _setup_inventory_with_link(graph)
+    _ROWS = [
+        {"sku": "A", "product_id": 1, "qty": 10},
+        {"sku": "B", "product_id": 99, "qty": 5},  # no Product 99
+    ]
+
+    result = materialize_source(repo=repo, graph=graph, class_name="Inventory")
+
+    assert result.nodes_upserted == 2  # both nodes created
+    assert result.edges_upserted == 1  # only product 1 linked
+    assert result.links_missing == 1
+
+
+def test_resync_rebuilds_links(graph):
+    global _ROWS
+    repo = _setup_inventory_with_link(graph)
+    _ROWS = [{"sku": "A", "product_id": 1, "qty": 10}]
+    materialize_source(repo=repo, graph=graph, class_name="Inventory")
+    # re-sync (prune wipes old Inventory nodes + their edges, then rebuilds)
+    _ROWS = [{"sku": "A", "product_id": 2, "qty": 7}]
+    result = materialize_source(repo=repo, graph=graph, class_name="Inventory")
+    assert result.nodes_pruned == 1
+    assert result.edges_upserted == 1
+    edges = graph.query(
+        "MATCH (i:Inventory)-[:OF_PRODUCT]->(p:Product) RETURN i.sku, p.product_id"
+    ).result_set
+    assert edges == [["A", 2]]

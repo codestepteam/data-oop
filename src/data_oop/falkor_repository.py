@@ -17,6 +17,7 @@ from .models import (
     PropertyDef,
     RelationshipDef,
     SourceBinding,
+    SourceLink,
 )
 
 
@@ -55,6 +56,39 @@ class FalkorTBoxRepository:
             except json.JSONDecodeError:
                 return {}
         return dict(value)
+
+    @staticmethod
+    def _links_to_json(links: tuple[SourceLink, ...]) -> str:
+        return json.dumps(
+            [
+                {
+                    "relationship_name": link.relationship_name,
+                    "to_class": link.to_class,
+                    "local_key": link.local_key,
+                    "target_property": link.target_property or link.local_key,
+                    "direction": link.direction,
+                }
+                for link in links
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+    @staticmethod
+    def _parse_links(value: Any) -> tuple[SourceLink, ...]:
+        if not value:
+            return ()
+        data = json.loads(value) if isinstance(value, str) else value
+        return tuple(
+            SourceLink(
+                relationship_name=item["relationship_name"],
+                to_class=item["to_class"],
+                local_key=item["local_key"],
+                target_property=item.get("target_property") or item["local_key"],
+                direction=item.get("direction", "out"),
+            )
+            for item in data
+        )
 
     def _require_class(self, name: str) -> ClassDef:
         cls = self.get_class(name)
@@ -1617,6 +1651,7 @@ class FalkorTBoxRepository:
         column_map: dict[str, str] | None = None,
         materialization: Literal["materialized", "virtual"] = "materialized",
         refresh_interval_hours: int | None = None,
+        links: tuple[SourceLink, ...] = (),
     ) -> SourceBinding:
         self._require_class(class_name)
         self._require_connector(connector_name)
@@ -1624,6 +1659,7 @@ class FalkorTBoxRepository:
             raise TBoxConflictError(
                 f"SourceBinding requires at least one key column: {class_name}"
             )
+        normalized_links = self._parse_links(self._links_to_json(tuple(links)))
         # A class carries at most one source binding; clear any prior edge first so a
         # connector change doesn't leave two HAS_CONNECTOR edges behind.
         self._query(
@@ -1639,7 +1675,8 @@ class FalkorTBoxRepository:
                 e.keyColumns = $key_columns,
                 e.columnMap = $column_map,
                 e.materialization = $materialization,
-                e.refreshIntervalHours = $refresh_interval_hours
+                e.refreshIntervalHours = $refresh_interval_hours,
+                e.links = $links
             """,
             {
                 "class_name": class_name,
@@ -1649,6 +1686,7 @@ class FalkorTBoxRepository:
                 "column_map": self._json(column_map or {}),
                 "materialization": materialization,
                 "refresh_interval_hours": refresh_interval_hours,
+                "links": self._links_to_json(normalized_links),
             },
         )
         return SourceBinding(
@@ -1659,13 +1697,14 @@ class FalkorTBoxRepository:
             column_map=dict(column_map or {}),
             materialization=materialization,
             refresh_interval_hours=refresh_interval_hours,
+            links=normalized_links,
         )
 
     def get_source_binding(self, class_name: str) -> SourceBinding | None:
         rows = self._query(
             """
             MATCH (c:TBox:ClassDef {name: $class_name})-[e:HAS_CONNECTOR]->(k:TBox:ConnectorDef)
-            RETURN k.name, e.sql, e.keyColumns, e.columnMap, e.materialization, e.refreshIntervalHours
+            RETURN k.name, e.sql, e.keyColumns, e.columnMap, e.materialization, e.refreshIntervalHours, e.links
             """,
             {"class_name": class_name},
         )
@@ -1680,6 +1719,7 @@ class FalkorTBoxRepository:
             column_map=self._parse_json(row[3]),
             materialization=row[4] or "materialized",
             refresh_interval_hours=row[5],
+            links=self._parse_links(row[6]),
         )
 
     def detach_source_binding_from_class(self, class_name: str) -> None:
@@ -1693,7 +1733,7 @@ class FalkorTBoxRepository:
         rows = self._query(
             """
             MATCH (c:TBox:ClassDef)-[e:HAS_CONNECTOR]->(k:TBox:ConnectorDef)
-            RETURN c.name, k.name, e.sql, e.keyColumns, e.columnMap, e.materialization, e.refreshIntervalHours
+            RETURN c.name, k.name, e.sql, e.keyColumns, e.columnMap, e.materialization, e.refreshIntervalHours, e.links
             """
         )
         bindings = [
@@ -1705,6 +1745,7 @@ class FalkorTBoxRepository:
                 column_map=self._parse_json(row[4]),
                 materialization=row[5] or "materialized",
                 refresh_interval_hours=row[6],
+                links=self._parse_links(row[7]),
             )
             for row in rows
         ]

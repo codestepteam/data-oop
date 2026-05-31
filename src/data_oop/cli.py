@@ -11,6 +11,7 @@ from falkordb import FalkorDB
 
 from data_oop import (
     FalkorTBoxRepository,
+    SourceLink,
     connect_and_clear_abox_nodes,
     connect_and_run_latest_falkor_abox_validation,
     materialize_source,
@@ -513,6 +514,27 @@ def cmd_bind_source(args: argparse.Namespace) -> None:
         print("Error: --key-columns must list at least one column", file=sys.stderr)
         sys.exit(1)
 
+    links: list[SourceLink] = []
+    for raw in args.link or []:
+        try:
+            spec = json.loads(raw)
+        except json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON for --link: {e}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            links.append(
+                SourceLink(
+                    relationship_name=spec["rel"],
+                    to_class=spec["to"],
+                    local_key=spec["key"],
+                    target_property=spec.get("target", ""),
+                    direction=spec.get("dir", "out"),
+                )
+            )
+        except KeyError as e:
+            print(f"Error: --link missing required field {e} (need rel, to, key)", file=sys.stderr)
+            sys.exit(1)
+
     print(f"Binding class '{args.class_name}' to connector '{args.connector}'...")
     repo.attach_source_binding_to_class(
         class_name=args.class_name,
@@ -522,6 +544,7 @@ def cmd_bind_source(args: argparse.Namespace) -> None:
         column_map=column_map,
         materialization=args.materialization,
         refresh_interval_hours=args.refresh_interval_hours,
+        links=tuple(links),
     )
     print("Source binding attached successfully.")
 
@@ -544,7 +567,8 @@ def cmd_sync_source(args: argparse.Namespace) -> None:
         sys.exit(1)
     print(
         f"Sync done: fetched={result.rows_fetched}, upserted={result.nodes_upserted}, "
-        f"pruned={result.nodes_pruned}, synced_at={result.synced_at}"
+        f"pruned={result.nodes_pruned}, edges={result.edges_upserted}, "
+        f"links_missing={result.links_missing}, synced_at={result.synced_at}"
     )
 
 
@@ -719,6 +743,11 @@ def main() -> None:
     p_bind.add_argument("--column-map", help="JSON mapping of sql_column -> class property")
     p_bind.add_argument("--materialization", choices=["materialized", "virtual"], default="materialized", help="Default: materialized")
     p_bind.add_argument("--refresh-interval-hours", type=int, help="Freshness hint (hours)")
+    p_bind.add_argument(
+        "--link",
+        action="append",
+        help='Edge to an existing node, repeatable. JSON: {"rel":"OF_PRODUCT","to":"Product","key":"product_id"[,"target":"product_id","dir":"out|in"]}',
+    )
     p_bind.set_defaults(func=cmd_bind_source)
 
     # sync-source

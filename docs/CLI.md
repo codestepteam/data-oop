@@ -194,6 +194,15 @@ data-oop bind-source --class-name VipSegment --connector prod_pg \
   --sql @sql/vip_segment.sql --key-columns segment_name
 ```
 
+**기존 노드와 관계(엣지) 연결**: `--link` 옵션(반복 가능)으로, 적재되는 각 행을 그래프에 이미 존재하는 노드와 관계로 잇습니다. 행의 `key` 컬럼 값을 대상 클래스의 `target` 속성과 매칭하여 엣지를 MERGE합니다. 관계는 **TBox에 미리 정의**되어 있어야 합니다. 대상 노드를 못 찾으면 해당 링크는 건너뛰고(`links_missing`로 집계), 동기화 자체는 실패하지 않습니다.
+```bash
+# Inventory 행을 같은 product_id 를 가진 기존 Product 노드에 (Inventory)-[:OF_PRODUCT]->(Product) 로 연결
+#   target 생략 시 key 와 같은 이름(product_id)으로 매칭, dir 생략 시 out (source -> target)
+data-oop bind-source --class-name Inventory --connector prod_pg \
+  --sql "SELECT sku, product_id, qty FROM inventory" --key-columns sku \
+  --link '{"rel": "OF_PRODUCT", "to": "Product", "key": "product_id"}'
+```
+
 ### 3. 동기화 실행 (Sync)
 
 바인딩된 쿼리를 실행해 결과 행을 ABox 노드로 적재합니다. 기본적으로 동일 커넥터에서 이전에 적재한 노드를 먼저 비우고 새로 채웁니다(prune). 각 노드에는 `synced_at`, `source_connector` 가 기록됩니다.

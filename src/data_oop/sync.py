@@ -19,8 +19,8 @@ from uuid import uuid4
 from .connectors import fetch_rows
 from .exceptions import TBoxError, TBoxNotFoundError
 from .falkor import FalkorGraph
-from .falkor_abox import _safe_identifier, upsert_abox_node
-from .models import MaterializeResult, SourceBinding
+from .falkor_abox import _require_relationship_def, _safe_identifier, upsert_abox_node
+from .models import MaterializeResult, SourceBinding, SourceLink
 from .repository import TBoxRepository
 
 # Reserved bookkeeping properties written onto every materialized node. NAME_RE forbids a
@@ -63,15 +63,28 @@ def materialize_source(
     if prune:
         nodes_pruned = _prune(graph, label, connector.name)
 
-    for props in mapped:
-        props[SYNCED_AT_PROP] = synced_at
-        props[SOURCE_CONNECTOR_PROP] = connector.name
+    edges_upserted = 0
+    links_missing = 0
+    for props, row in zip(mapped, rows):
+        node_uuid = str(uuid4())
         upsert_abox_node(
             graph=graph,
             class_name=class_name,
-            uuid=str(uuid4()),
-            properties=props,
+            uuid=node_uuid,
+            properties={**props, SYNCED_AT_PROP: synced_at, SOURCE_CONNECTOR_PROP: connector.name},
         )
+        for link in binding.links:
+            created = _materialize_link(
+                graph,
+                source_class=class_name,
+                source_uuid=node_uuid,
+                link=link,
+                value=row.get(link.local_key),
+            )
+            if created:
+                edges_upserted += created
+            else:
+                links_missing += 1
 
     return MaterializeResult(
         class_name=class_name,
@@ -80,7 +93,59 @@ def materialize_source(
         nodes_upserted=len(mapped),
         nodes_pruned=nodes_pruned,
         synced_at=synced_at,
+        edges_upserted=edges_upserted,
+        links_missing=links_missing,
     )
+
+
+def _materialize_link(
+    graph: FalkorGraph,
+    *,
+    source_class: str,
+    source_uuid: str,
+    link: SourceLink,
+    value: Any,
+) -> int:
+    """MERGE one edge from the freshly synced node to an existing target node.
+
+    The target is matched by ``link.target_property == value``. Returns the number of
+    edges touched (0 means the target node was not found — the link is skipped, not fatal).
+    """
+    if value is None:
+        return 0
+    source_label = _safe_identifier(source_class, "class")
+    target_label = _safe_identifier(link.to_class, "to_class")
+    rel_type = _safe_identifier(link.relationship_name, "relationship")
+    target_prop = _safe_identifier(link.target_property or link.local_key, "property")
+
+    if link.direction == "out":
+        from_class, to_class = source_class, link.to_class
+        pattern = f"(s)-[r:{rel_type}]->(t)"
+        rel_uuid = "$src + ':' + $rel + ':' + t.uuid"
+    else:
+        from_class, to_class = link.to_class, source_class
+        pattern = f"(s)<-[r:{rel_type}]-(t)"
+        rel_uuid = "t.uuid + ':' + $rel + ':' + $src"
+
+    # The relationship must be a defined TBox edge in the orientation we are creating.
+    _require_relationship_def(
+        graph,
+        from_class=from_class,
+        relationship_name=link.relationship_name,
+        to_class=to_class,
+    )
+
+    result = graph.query(
+        f"""
+        MATCH (s:{source_label} {{uuid: $src}})
+        MATCH (t:{target_label} {{{target_prop}: $val}})
+        MERGE {pattern}
+        SET r.uuid = coalesce(r.uuid, {rel_uuid})
+        RETURN count(r)
+        """,
+        {"src": source_uuid, "val": value, "rel": link.relationship_name},
+    ).result_set
+    return int(result[0][0]) if result and result[0] else 0
 
 
 def _map_and_guard(
