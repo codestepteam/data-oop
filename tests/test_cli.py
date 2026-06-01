@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import pytest
 
@@ -207,16 +208,17 @@ def test_cli_tbox_define_relationship(mock_get_db, mock_repo_class) -> None:
 
 @patch("data_oop.cli.connect_and_upsert_abox_node")
 def test_cli_abox_upsert_node(mock_upsert) -> None:
+    user_uuid = "550e8400-e29b-41d4-a716-446655440000"
     mock_result = MagicMock()
     mock_result.class_name = "User"
-    mock_result.uuid = "user-1"
+    mock_result.uuid = user_uuid
     mock_upsert.return_value = mock_result
 
     test_args = [
         "data-oop",
         "abox-upsert-node",
         "--class-name", "User",
-        "--uuid", "user-1",
+        "--uuid", user_uuid,
         "--properties", '{"name": "Alice", "age": 30}'
     ]
     with patch.object(sys, "argv", test_args):
@@ -229,9 +231,46 @@ def test_cli_abox_upsert_node(mock_upsert) -> None:
         username=None,
         password=None,
         class_name="User",
-        uuid="user-1",
+        uuid=user_uuid,
         properties={"name": "Alice", "age": 30}
     )
+
+
+@patch("data_oop.cli.connect_and_upsert_abox_node")
+def test_cli_abox_upsert_node_generates_uuid_when_omitted(mock_upsert) -> None:
+    mock_result = MagicMock()
+    mock_result.class_name = "User"
+    mock_result.uuid = "generated"
+    mock_upsert.return_value = mock_result
+
+    test_args = [
+        "data-oop",
+        "abox-upsert-node",
+        "--class-name", "User",
+        "--properties", '{"name": "Alice"}'
+    ]
+    with patch.object(sys, "argv", test_args):
+        main()
+
+    generated_uuid = mock_upsert.call_args.kwargs["uuid"]
+    UUID(generated_uuid)
+    assert mock_upsert.call_args.kwargs["properties"] == {"name": "Alice"}
+
+
+@patch("data_oop.cli.connect_and_upsert_abox_node")
+def test_cli_abox_upsert_node_rejects_invalid_uuid(mock_upsert, capsys) -> None:
+    test_args = [
+        "data-oop",
+        "abox-upsert-node",
+        "--class-name", "User",
+        "--uuid", "user-1",
+    ]
+    with patch.object(sys, "argv", test_args), pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 1
+    assert "Error: --uuid must be a valid UUID: user-1" in capsys.readouterr().err
+    mock_upsert.assert_not_called()
 
 
 @patch("data_oop.cli.upsert_abox_relationship")

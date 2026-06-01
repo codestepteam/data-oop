@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from uuid import UUID, uuid4
 
 from falkordb import FalkorDB
 
@@ -301,9 +302,16 @@ def cmd_abox_upsert_node(args: argparse.Namespace) -> None:
             print(f"Error: Invalid JSON for properties: {e}", file=sys.stderr)
             sys.exit(1)
 
+    node_uuid = args.uuid or str(uuid4())
+    try:
+        UUID(node_uuid)
+    except ValueError:
+        print(f"Error: --uuid must be a valid UUID: {node_uuid}", file=sys.stderr)
+        sys.exit(1)
+
     host, port, graph_name, username, password = _get_db_env_values(args)
 
-    print(f"Upserting ABox node '{args.class_name}' with uuid '{args.uuid}'...")
+    print(f"Upserting ABox node '{args.class_name}' with uuid '{node_uuid}'...")
     result = connect_and_upsert_abox_node(
         graph_name=graph_name,
         host=host,
@@ -311,7 +319,7 @@ def cmd_abox_upsert_node(args: argparse.Namespace) -> None:
         username=username,
         password=password,
         class_name=args.class_name,
-        uuid=args.uuid,
+        uuid=node_uuid,
         properties=properties,
     )
     print(f"ABox node upserted successfully: label={result.class_name}, uuid={result.uuid}")
@@ -673,7 +681,7 @@ def main() -> None:
     # abox-upsert-node
     p_abox_node = subparsers.add_parser("abox-upsert-node", help="Create or update an ABox node instance")
     p_abox_node.add_argument("--class-name", required=True, help="Domain class name")
-    p_abox_node.add_argument("--uuid", required=True, help="UUID of the instance")
+    p_abox_node.add_argument("--uuid", help="UUID of the instance (auto-generated if omitted)")
     p_abox_node.add_argument("--properties", help="JSON string of property values")
     p_abox_node.set_defaults(func=cmd_abox_upsert_node)
 
