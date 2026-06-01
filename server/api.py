@@ -163,6 +163,8 @@ def get_tbox():
         properties = [p for p in repo.list_properties() if p.name not in ("steps_json", "parameters_json")]
         relationships = repo.list_relationships()
         constraints = repo.list_constraints()
+        connectors = repo.list_connectors()
+        source_bindings = repo.list_source_bindings()
         
         # Build enriched classes with effective properties
         enriched_classes = []
@@ -252,7 +254,39 @@ def get_tbox():
                     "metadata": c.metadata,
                 }
                 for c in constraints
-            ]
+            ],
+            "connectors": [
+                {
+                    "name": k.name,
+                    "kind": k.kind,
+                    "dsn_ref": k.dsn_ref,
+                    "description": k.description,
+                    "metadata": k.metadata,
+                }
+                for k in connectors
+            ],
+            "source_bindings": [
+                {
+                    "class_name": b.class_name,
+                    "connector_name": b.connector_name,
+                    "sql": b.sql,
+                    "key_columns": list(b.key_columns),
+                    "column_map": b.column_map,
+                    "materialization": b.materialization,
+                    "refresh_interval_hours": b.refresh_interval_hours,
+                    "links": [
+                        {
+                            "relationship_name": link.relationship_name,
+                            "to_class": link.to_class,
+                            "local_key": link.local_key,
+                            "target_property": link.target_property,
+                            "direction": link.direction,
+                        }
+                        for link in b.links
+                    ],
+                }
+                for b in source_bindings
+            ],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -35,6 +35,33 @@ export interface TBoxRelationship {
   description: string | null;
 }
 
+export interface ConnectorDef {
+  name: string;
+  kind: "postgres" | "mysql" | "bigquery";
+  dsn_ref: string;
+  description: string | null;
+  metadata: Record<string, any>;
+}
+
+export interface SourceLink {
+  relationship_name: string;
+  to_class: string;
+  local_key: string;
+  target_property: string;
+  direction: "out" | "in";
+}
+
+export interface SourceBinding {
+  class_name: string;
+  connector_name: string;
+  sql: string;
+  key_columns: string[];
+  column_map: Record<string, string>;
+  materialization: "materialized" | "virtual";
+  refresh_interval_hours: number | null;
+  links: SourceLink[];
+}
+
 export interface WorkflowStep {
   step_id: string;
   action: "create_node" | "create_relationship" | "run_workflow";

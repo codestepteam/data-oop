@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { RefreshCw, Plus, Activity, Database } from "lucide-react";
-import type { TBoxClass, TBoxInterface, TBoxRelationship } from "../types";
+import { RefreshCw, Plus, Activity, Database, Cable, Link2 } from "lucide-react";
+import type {
+  TBoxClass,
+  TBoxInterface,
+  TBoxRelationship,
+  ConnectorDef,
+  SourceBinding,
+} from "../types";
 
 interface TBoxSchemaTabProps {
   tbox: {
@@ -9,6 +15,8 @@ interface TBoxSchemaTabProps {
     properties: any[];
     relationships: TBoxRelationship[];
     constraints: any[];
+    connectors?: ConnectorDef[];
+    source_bindings?: SourceBinding[];
   };
   loading: boolean;
   onRefresh: () => void;
@@ -525,6 +533,95 @@ export function TBoxSchemaTab({
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* External RDB Connectors & Source Bindings */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Connectors */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+          <h3 className="font-bold text-slate-950 text-base mb-4 flex items-center space-x-2">
+            <Cable className="h-5 w-5 text-cyan-500" />
+            <span>External RDB Connectors ({(tbox.connectors ?? []).length})</span>
+          </h3>
+          {(tbox.connectors ?? []).length === 0 ? (
+            <p className="text-sm text-slate-400 italic">No connectors defined.</p>
+          ) : (
+            <div className="space-y-3">
+              {(tbox.connectors ?? []).map((conn) => (
+                <div key={conn.name} className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-slate-900">{conn.name}</span>
+                    <span className="text-xs font-mono bg-cyan-100 text-cyan-800 px-2 py-0.5 rounded-md border border-cyan-200">
+                      {conn.kind}
+                    </span>
+                  </div>
+                  {conn.dsn_ref && (
+                    <p className="text-xs text-slate-500 mt-1">
+                      DSN env: <span className="font-mono">{conn.dsn_ref}</span>
+                    </p>
+                  )}
+                  {conn.description && (
+                    <p className="text-xs text-slate-400 mt-1 italic">{conn.description}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Source Bindings */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+          <h3 className="font-bold text-slate-950 text-base mb-4 flex items-center space-x-2">
+            <Database className="h-5 w-5 text-amber-500" />
+            <span>Source Bindings ({(tbox.source_bindings ?? []).length})</span>
+          </h3>
+          {(tbox.source_bindings ?? []).length === 0 ? (
+            <p className="text-sm text-slate-400 italic">No source bindings configured.</p>
+          ) : (
+            <div className="space-y-3">
+              {(tbox.source_bindings ?? []).map((b) => (
+                <div key={b.class_name} className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm font-bold text-slate-900">{b.class_name}</span>
+                      <span className="text-xs text-slate-400">←</span>
+                      <span className="text-xs font-mono bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md border border-amber-200">
+                        {b.connector_name}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-semibold text-slate-500 uppercase">{b.materialization}</span>
+                  </div>
+                  <p className="text-[11px] font-mono text-slate-500 mt-2 line-clamp-2 break-all">{b.sql}</p>
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {b.key_columns.map((k) => (
+                      <span key={k} className="text-[10px] font-mono bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">
+                        key: {k}
+                      </span>
+                    ))}
+                    {b.refresh_interval_hours != null && (
+                      <span className="text-[10px] text-slate-500 px-1.5 py-0.5">⟳ {b.refresh_interval_hours}h</span>
+                    )}
+                  </div>
+                  {b.links.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {b.links.map((link, i) => (
+                        <div key={i} className="flex items-center space-x-1 text-[11px] text-slate-600">
+                          <Link2 className="h-3 w-3 text-emerald-500" />
+                          <span className="font-mono">
+                            {link.direction === "out"
+                              ? `${b.class_name} -${link.relationship_name}→ ${link.to_class}`
+                              : `${link.to_class} -${link.relationship_name}→ ${b.class_name}`}
+                          </span>
+                          <span className="text-slate-400">({link.local_key}={link.target_property})</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
