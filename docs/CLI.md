@@ -228,3 +228,135 @@ data-oop delete-connector --name prod_pg --detach
 ```
 
 > 드라이버는 선택 설치입니다: `pip install 'data-oop[postgres]'` / `[mysql]` / `[bigquery]`.
+
+---
+
+## 6단계: 트리거 (클래스 콜백) — 생성/수정 시 워크플로우 실행
+
+특정 클래스의 ABox 노드가 **생성(create)되거나 수정(update)될 때** 자동으로 동작을 실행하고 싶을 때 트리거를 등록합니다. 핵심 원칙은 **콜백이 코드가 아니라 데이터**라는 것입니다. 트리거는 실행할 동작을 직접 담지 않고, 이미 FalkorDB에 저장된 **워크플로우(WorkflowDefinition)의 이름을 참조**합니다. 따라서 규칙 전체(언제·무엇을·어떤 조건에)가 그래프 안에 데이터로 존재하며, `db-dump`/`db-restore`로 그대로 이동합니다.
+
+저장 구조는 `(:TBox:ClassDef)-[:HAS_TRIGGER]->(:TBox:TriggerDef)` 이며, TBox의 일부로 관리됩니다.
+
+### 1. 사전 준비: 실행할 워크플로우 저장
+
+트리거가 가리킬 워크플로우가 **먼저 존재**해야 합니다(없으면 `add-trigger`가 거부합니다). 워크플로우는 API/라이브러리로 저장합니다.
+
+```python
+# 예: Order 생성 시 감사 로그 노드를 만드는 워크플로우
+from data_oop import save_workflow
+save_workflow(
+    graph=graph,
+    name="audit_order",
+    steps=[{
+        "step_id": "log",
+        "action": "create_node",
+        "class_name": "AuditLog",
+        "properties": {"order_ref": "{order_id}"},  # 워크플로우 파라미터 order_id 를 참조
+    }],
+)
+```
+
+#### 워크플로우 파라미터는 어떻게 정해지나
+
+트리거가 발화하면, 먼저 **변경된 노드의 전체 현재 상태**(저장된 모든 속성 + `uuid`)를 그래프에서 읽어 보간 컨텍스트로 씁니다. 부분 수정(일부 속성만 upsert)이어도 워크플로우는 노드의 나머지 속성까지 모두 볼 수 있습니다.
+
+그 위에서 워크플로우로 넘어갈 파라미터는 두 방식 중 하나로 결정됩니다.
+
+- **명시적 매핑 (권장)** — `--param 워크플로우파라미터=템플릿` 으로 "어떤 파라미터에 어떤 값"을 직접 지정합니다. 템플릿은 노드에 대해 보간됩니다(`{uuid}`, `{total}`). 중괄호가 없으면 리터럴입니다. 워크플로우 파라미터명과 노드 속성명이 달라도 됩니다.
+- **기본값 (매핑 생략)** — `--param` 을 하나도 주지 않으면 노드의 속성이 그대로(평탄하게) 파라미터로 전달됩니다. 워크플로우가 노드 속성명과 같은 이름을 참조할 때 편합니다.
+
+### 2. 트리거 등록 (add-trigger)
+
+```bash
+# Order 생성 시 audit_order 실행. --param 으로 워크플로우 파라미터(order_id) <- 노드 속성(uuid) 매핑
+#   워크플로우 파라미터명과 노드 속성명이 달라도 명시적으로 연결됨
+data-oop add-trigger --class-name Order --name on_order_created \
+  --event create --workflow audit_order \
+  --param order_id={uuid} --param amount={total} --param channel=naver
+
+# --param 생략 시: 노드 속성이 그대로 파라미터로 전달 (워크플로우가 {uuid} 등 노드 속성명을 직접 참조할 때)
+data-oop add-trigger --class-name Order --name on_order_simple \
+  --event create --workflow audit_order
+
+# 수정 시 + 조건부 발화: paid 속성이 비어있지 않을 때만 실행
+#   --condition 은 노드의 속성 경로이며, 값이 비어있으면(None/""/[]) 스킵됩니다.
+data-oop add-trigger --class-name Order --name on_paid \
+  --event update --workflow notify_payment --condition paid \
+  --param order_id={uuid}
+
+# 같은 이벤트에 여러 트리거가 걸리면 --order 오름차순으로 실행됩니다.
+data-oop add-trigger --class-name Order --name first_step \
+  --event create --workflow step_a --order 0
+data-oop add-trigger --class-name Order --name second_step \
+  --event create --workflow step_b --order 1
+
+# 등록만 하고 발화는 끄려면 --disabled
+data-oop add-trigger --class-name Order --name draft_only \
+  --event create --workflow wf_x --disabled
+```
+
+옵션 요약:
+
+| 옵션 | 설명 |
+|------|------|
+| `--class-name` | 트리거가 걸리는 ClassDef |
+| `--name` | 트리거 이름 (클래스 내 유일) |
+| `--event` | `create` 또는 `update` |
+| `--workflow` | 실행할 WorkflowDefinition 이름 (사전 존재 필수) |
+| `--condition` | 노드 속성 경로. 값이 비어있지 않을 때만 발화 (선택) |
+| `--order` | 동일 이벤트 내 실행 순서 (기본 0) |
+| `--disabled` | 등록하되 발화하지 않음 |
+| `--description` | 설명 |
+| `--param` | `워크플로우파라미터=템플릿` (반복 가능). 노드에 대해 보간. 생략 시 노드 속성 평탄 전달 |
+
+### 3. 발화 시점
+
+트리거는 ABox 노드의 단일 진입점(`upsert_abox_node`)에서 발화합니다. 즉 `abox-upsert-node`, API를 통한 노드 생성/수정, 그리고 **워크플로우가 만든 노드**까지 모두 대상입니다.
+
+```bash
+# 아래 한 줄이 Order 노드를 만들고, on_order_created 트리거가 audit_order 를 실행 → AuditLog 노드 생성
+data-oop abox-upsert-node --class-name Order --uuid order-1 --properties '{"total": 100}'
+```
+
+> 예외 — 대량 동기화: `sync-source`(5단계)는 수천 행을 적재할 수 있어 **행별로 트리거를 발화하지 않습니다.** 동기화로 들어온 집계 노드에 후처리가 필요하면 동기화 후 별도 워크플로우를 호출하세요.
+
+### 4. 무한 루프 / 발산 방지 — 등록 시 사이클 검사
+
+트리거의 워크플로우가 또 다른 노드를 만들면 그 노드의 트리거가 다시 발화될 수 있습니다. 이 관계는 방향 그래프를 이루며, **사이클은 무한 콜백 루프**가 됩니다. `add-trigger`는 저장 직전에 트리거 그래프를 분석하여 **사이클을 만드는 트리거는 저장 자체를 거부**합니다(종료 코드 `1`).
+
+```bash
+# A 생성 -> wfA(B 생성), B 생성 -> wfB(A 생성) 인 경우, 두 번째 등록이 거부됨
+data-oop add-trigger --class-name AuditLog --name loopback --event create --workflow make_order
+# Error: Trigger cycle detected: loopback -> on_order_created
+#   cycle: loopback -> on_order_created
+```
+
+저장 전에 현재 트리거 그래프 전체의 건전성을 확인하려면 `validate-triggers`를 사용합니다. 읽기 전용이며 아무것도 저장하지 않습니다.
+
+```bash
+data-oop validate-triggers
+# Trigger graph OK: no cycles.
+#
+# 문제가 있으면:
+# Trigger graph INVALID: 1 cycle(s).
+#   cycle: tA -> tB
+# Warning - unbounded fan-out (loop_over): tC        # loop_over 로 행 수만큼 노드 생성 → 정적 상한 불가
+# Warning - dynamic class (unanalyzable): tD          # class_name 이 {변수} 라 정적 분석 불가
+# Warning - triggers referencing missing workflows: tE
+```
+
+정적 분석은 **보수적**입니다. "사이클 없음"은 안전 보증이지만, `--condition`(런타임 데이터 의존)이나 `loop_over`(행 수 의존), 동적 클래스명은 정적으로 묶을 수 없어 경고로만 표시됩니다. 이를 보완하기 위해 런타임에 **트리거 연쇄 깊이 상한(`MAX_TRIGGER_DEPTH`)** 이 백스톱으로 항상 동작하므로, 정적 분석이 놓친 경우라도 무한 재귀로 빠지지 않습니다.
+
+### 5. 트리거 조회 및 삭제
+
+```bash
+# 등록된 트리거 목록
+data-oop list-triggers
+#   - on_order_created: (Order) on create -> workflow 'audit_order' [order=0]
+
+# inspect 출력에도 [Triggers] 섹션으로 함께 표시됨
+data-oop inspect
+
+# 트리거 삭제 (클래스 + 이름으로 지정)
+data-oop delete-trigger --class-name Order --name on_order_created
+```

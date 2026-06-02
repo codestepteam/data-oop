@@ -244,3 +244,39 @@ class WorkflowDef:
     parameters: tuple[WorkflowParameterDef, ...] = ()
     description: str | None = None
     uuid: str | None = None
+
+
+# A trigger fires when an ABox node of its class is created or updated.
+TriggerEvent = Literal["create", "update"]
+
+
+@dataclass(frozen=True)
+class TriggerDef:
+    """A class-level callback: when an ABox node of ``class_name`` is created or
+    updated, run the workflow ``workflow_name``.
+
+    The callback itself is data, not code — it references a stored
+    ``WorkflowDefinition`` so the whole rule lives in FalkorDB.
+
+    When the trigger fires, the **full current node state** (every stored property,
+    including ``uuid``) is read from the graph and used as the interpolation
+    context. ``parameter_map`` then explicitly states which workflow parameter gets
+    which value: each value is a template interpolated against the node, e.g.
+    ``{"order_id": "{uuid}", "amount": "{total}", "channel": "naver"}``. Templates
+    without braces are literals. When ``parameter_map`` is empty, the node's
+    properties are passed through flat as a convenience default.
+
+    ``condition`` is an optional property path on the node; the trigger fires only
+    when it resolves to a non-empty value. ``order`` controls execution order among
+    triggers sharing the same class and event.
+    """
+
+    name: str
+    class_name: str
+    event: TriggerEvent
+    workflow_name: str
+    condition: str | None = None
+    enabled: bool = True
+    order: int = 0
+    description: str | None = None
+    parameter_map: dict[str, Any] = field(default_factory=dict)

@@ -182,6 +182,18 @@ def cmd_inspect(args: argparse.Namespace) -> None:
     except Exception:
         pass
 
+    # Inspect triggers
+    triggers = repo.list_triggers()
+    if triggers:
+        print(f"\n[Triggers] ({len(triggers)})")
+        for t in triggers:
+            state = "" if t.enabled else " [disabled]"
+            cond = f" if {t.condition}" if t.condition else ""
+            print(
+                f"  - {t.name}: ({t.class_name}) on {t.event}{cond} -> "
+                f"workflow '{t.workflow_name}'{state}"
+            )
+
 
 def cmd_tbox_create_class(args: argparse.Namespace) -> None:
     """Create a ClassDef in TBox."""
@@ -580,6 +592,104 @@ def cmd_sync_source(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_add_trigger(args: argparse.Namespace) -> None:
+    """Register a class-level trigger: on create/update, run a stored workflow.
+
+    Rejected before saving if it would close a cycle in the trigger graph.
+    """
+    from data_oop.exceptions import TriggerCycleError
+
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+
+    # --param NAME=TEMPLATE (repeatable). TEMPLATE is interpolated against the node,
+    # e.g. --param order_id={uuid} --param amount={total} --param channel=naver
+    parameter_map: dict[str, str] = {}
+    for raw in args.param or []:
+        if "=" not in raw:
+            print(f"Error: --param must be NAME=TEMPLATE, got: {raw}", file=sys.stderr)
+            sys.exit(1)
+        key, value = raw.split("=", 1)
+        parameter_map[key.strip()] = value
+
+    print(
+        f"Registering trigger '{args.name}' on {args.class_name}/{args.event} "
+        f"-> workflow '{args.workflow}'..."
+    )
+    try:
+        repo.attach_trigger_to_class(
+            class_name=args.class_name,
+            name=args.name,
+            event=args.event,
+            workflow_name=args.workflow,
+            condition=args.condition,
+            enabled=not args.disabled,
+            order=args.order,
+            description=args.description,
+            parameter_map=parameter_map,
+        )
+    except TriggerCycleError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        for cycle in e.cycles:
+            print(f"  cycle: {' -> '.join(cycle)}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error registering trigger: {e}", file=sys.stderr)
+        sys.exit(1)
+    print("Trigger registered successfully.")
+
+
+def cmd_list_triggers(args: argparse.Namespace) -> None:
+    """List registered triggers."""
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+
+    triggers = repo.list_triggers()
+    print(f"[Triggers] ({len(triggers)})")
+    for t in triggers:
+        state = "" if t.enabled else " [disabled]"
+        cond = f" if {t.condition}" if t.condition else ""
+        print(
+            f"  - {t.name}: ({t.class_name}) on {t.event}{cond} -> "
+            f"workflow '{t.workflow_name}' [order={t.order}]{state}"
+        )
+        if t.parameter_map:
+            params = ", ".join(f"{k}={v}" for k, v in t.parameter_map.items())
+            print(f"      params: {params}")
+
+
+def cmd_delete_trigger(args: argparse.Namespace) -> None:
+    """Delete a trigger by class and name."""
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+
+    print(f"Deleting trigger '{args.name}' on {args.class_name}...")
+    repo.delete_trigger(args.class_name, args.name)
+    print("Trigger deleted successfully.")
+
+
+def cmd_validate_triggers(args: argparse.Namespace) -> None:
+    """Analyse the trigger graph for cycles and divergence without saving."""
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+
+    report = repo.analyze_triggers()
+    if report.valid:
+        print("Trigger graph OK: no cycles.")
+    else:
+        print(f"Trigger graph INVALID: {len(report.cycles)} cycle(s).")
+        for cycle in report.cycles:
+            print(f"  cycle: {' -> '.join(cycle)}")
+    if report.unbounded:
+        print(f"Warning - unbounded fan-out (loop_over): {', '.join(report.unbounded)}")
+    if report.unresolved:
+        print(f"Warning - dynamic class (unanalyzable): {', '.join(report.unresolved)}")
+    if report.missing_workflows:
+        print(f"Warning - triggers referencing missing workflows: {', '.join(report.missing_workflows)}")
+    if not report.valid:
+        sys.exit(1)
+
+
 def load_dotenv(dotenv_path: str = ".env") -> None:
     """Load variables from a .env file into os.environ if it exists."""
     if not os.path.exists(dotenv_path):
@@ -763,6 +873,39 @@ def main() -> None:
     p_sync.add_argument("--class-name", required=True, help="Source-backed ClassDef name")
     p_sync.add_argument("--no-prune", action="store_true", help="Keep previously synced nodes instead of replacing")
     p_sync.set_defaults(func=cmd_sync_source)
+
+    # add-trigger
+    p_add_trg = subparsers.add_parser("add-trigger", help="Register a class trigger: on create/update, run a workflow")
+    p_add_trg.add_argument("--class-name", required=True, help="ClassDef the trigger fires on")
+    p_add_trg.add_argument("--name", required=True, help="Trigger name (unique per class)")
+    p_add_trg.add_argument("--event", required=True, choices=["create", "update"], help="Fire on node create or update")
+    p_add_trg.add_argument("--workflow", required=True, help="Stored WorkflowDefinition to run")
+    p_add_trg.add_argument("--condition", help="Node property path; fires only if non-empty")
+    p_add_trg.add_argument("--order", type=int, default=0, help="Execution order among same-event triggers (default: 0)")
+    p_add_trg.add_argument("--disabled", action="store_true", help="Register but do not fire")
+    p_add_trg.add_argument("--description", help="Description")
+    p_add_trg.add_argument(
+        "--param",
+        action="append",
+        help="Workflow parameter binding NAME=TEMPLATE, repeatable. TEMPLATE is interpolated "
+        "against the full node, e.g. --param order_id={uuid} --param channel=naver. "
+        "Omit to pass the node's properties through flat.",
+    )
+    p_add_trg.set_defaults(func=cmd_add_trigger)
+
+    # list-triggers
+    p_list_trg = subparsers.add_parser("list-triggers", help="List registered triggers")
+    p_list_trg.set_defaults(func=cmd_list_triggers)
+
+    # delete-trigger
+    p_del_trg = subparsers.add_parser("delete-trigger", help="Delete a trigger by class and name")
+    p_del_trg.add_argument("--class-name", required=True, help="ClassDef the trigger is on")
+    p_del_trg.add_argument("--name", required=True, help="Trigger name")
+    p_del_trg.set_defaults(func=cmd_delete_trigger)
+
+    # validate-triggers
+    p_val_trg = subparsers.add_parser("validate-triggers", help="Analyse the trigger graph for cycles/divergence (no save)")
+    p_val_trg.set_defaults(func=cmd_validate_triggers)
 
     # db-dump
     p_db_dump = subparsers.add_parser("db-dump", help="Dump FalkorDB graph data to a file (graph specified by global --graph option)")

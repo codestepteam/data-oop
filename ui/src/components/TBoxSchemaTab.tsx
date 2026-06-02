@@ -1,12 +1,15 @@
-import { useState } from "react";
-import { RefreshCw, Plus, Activity, Database, Cable, Link2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { RefreshCw, Plus, Activity, Database, Cable, Link2, Zap, Trash2, AlertTriangle } from "lucide-react";
 import type {
   TBoxClass,
   TBoxInterface,
   TBoxRelationship,
   ConnectorDef,
   SourceBinding,
+  TriggerDef,
+  TriggerGraphReport,
 } from "../types";
+import type { TriggerInput } from "../hooks/useTBox";
 
 interface TBoxSchemaTabProps {
   tbox: {
@@ -17,6 +20,7 @@ interface TBoxSchemaTabProps {
     constraints: any[];
     connectors?: ConnectorDef[];
     source_bindings?: SourceBinding[];
+    triggers?: TriggerDef[];
   };
   loading: boolean;
   onRefresh: () => void;
@@ -24,6 +28,9 @@ interface TBoxSchemaTabProps {
   onCreateProperty: (name: string, datatype: string, desc: string) => Promise<boolean>;
   onAttachProperty: (className: string, propName: string, req: boolean, uniq: boolean) => Promise<boolean>;
   onCreateRelationship: (id: string, name: string, fromClass: string, toClass: string, req: boolean) => Promise<boolean>;
+  onCreateTrigger: (input: TriggerInput) => Promise<{ ok: boolean; error?: string; cycles?: string[][] }>;
+  onDeleteTrigger: (className: string, name: string) => Promise<boolean>;
+  onValidateTriggers: (candidate?: TriggerInput) => Promise<TriggerGraphReport | null>;
 }
 
 export function TBoxSchemaTab({
@@ -33,7 +40,10 @@ export function TBoxSchemaTab({
   onCreateClass,
   onCreateProperty,
   onAttachProperty,
-  onCreateRelationship
+  onCreateRelationship,
+  onCreateTrigger,
+  onDeleteTrigger,
+  onValidateTriggers
 }: TBoxSchemaTabProps) {
   // Modals visibility
   const [showCreateClass, setShowCreateClass] = useState(false);
@@ -63,6 +73,98 @@ export function TBoxSchemaTab({
   const [newRelFrom, setNewRelFrom] = useState("");
   const [newRelTo, setNewRelTo] = useState("");
   const [newRelRequired, setNewRelRequired] = useState(false);
+
+  // Trigger form
+  const [showCreateTrigger, setShowCreateTrigger] = useState(false);
+  const [trgClass, setTrgClass] = useState("");
+  const [trgName, setTrgName] = useState("");
+  const [trgEvent, setTrgEvent] = useState<"create" | "update">("create");
+  const [trgWorkflow, setTrgWorkflow] = useState("");
+  const [trgCondition, setTrgCondition] = useState("");
+  const [trgOrder, setTrgOrder] = useState(0);
+  const [trgDesc, setTrgDesc] = useState("");
+  const [trgParams, setTrgParams] = useState<{ key: string; value: string }[]>([]);
+  const [trgError, setTrgError] = useState<string | null>(null);
+  const [trgReport, setTrgReport] = useState<TriggerGraphReport | null>(null);
+  const [workflowNames, setWorkflowNames] = useState<string[]>([]);
+
+  // Workflow names power the trigger's "run this workflow" dropdown.
+  useEffect(() => {
+    if (!showCreateTrigger) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/workflows");
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data)) {
+          setWorkflowNames(data.map((w: { name: string }) => w.name));
+        }
+      } catch (err) {
+        console.error("Error fetching workflows", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showCreateTrigger]);
+
+  const triggerInput = (): TriggerInput => {
+    const parameter_map: Record<string, string> = {};
+    for (const row of trgParams) {
+      if (row.key.trim()) parameter_map[row.key.trim()] = row.value;
+    }
+    return {
+      class_name: trgClass,
+      name: trgName,
+      event: trgEvent,
+      workflow_name: trgWorkflow,
+      condition: trgCondition || null,
+      order: trgOrder,
+      description: trgDesc || null,
+      parameter_map,
+    };
+  };
+
+  const resetTriggerForm = () => {
+    setTrgClass("");
+    setTrgName("");
+    setTrgEvent("create");
+    setTrgWorkflow("");
+    setTrgCondition("");
+    setTrgOrder(0);
+    setTrgDesc("");
+    setTrgParams([]);
+    setTrgError(null);
+    setTrgReport(null);
+  };
+
+  const handleTriggerPreview = async () => {
+    setTrgError(null);
+    if (!trgClass || !trgName || !trgWorkflow) {
+      setTrgError("Class, name and workflow are required to validate.");
+      return;
+    }
+    const report = await onValidateTriggers(triggerInput());
+    setTrgReport(report);
+  };
+
+  const handleTriggerSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTrgError(null);
+    const result = await onCreateTrigger(triggerInput());
+    if (result.ok) {
+      setShowCreateTrigger(false);
+      resetTriggerForm();
+      return;
+    }
+    if (result.cycles && result.cycles.length > 0) {
+      setTrgError(
+        `Trigger cycle detected: ${result.cycles.map((c) => c.join(" → ")).join("; ")}`
+      );
+    } else {
+      setTrgError(result.error || "Failed to create trigger.");
+    }
+  };
 
   const handleClassSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -152,6 +254,13 @@ export function TBoxSchemaTab({
           >
             <Plus className="h-4 w-4" />
             <span>Define Relation</span>
+          </button>
+          <button
+            onClick={() => { resetTriggerForm(); setShowCreateTrigger(true); }}
+            className="flex items-center space-x-1 px-3 py-1.5 bg-rose-600 text-white rounded-lg text-sm font-medium hover:bg-rose-700"
+          >
+            <Zap className="h-4 w-4" />
+            <span>Add Trigger</span>
           </button>
         </div>
       </div>
@@ -624,6 +733,284 @@ export function TBoxSchemaTab({
           )}
         </div>
       </div>
+
+      {/* Triggers (class-level callbacks: on create/update -> run workflow) */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <h3 className="font-bold text-slate-950 text-base mb-4 flex items-center space-x-2">
+          <Zap className="h-5 w-5 text-rose-500" />
+          <span>Triggers ({(tbox.triggers ?? []).length})</span>
+          <span className="text-xs font-normal text-slate-400">— on create/update, run a workflow</span>
+        </h3>
+        {(tbox.triggers ?? []).length === 0 ? (
+          <p className="text-sm text-slate-400 italic">No triggers registered.</p>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {(tbox.triggers ?? []).map((t) => (
+              <div
+                key={`${t.class_name}:${t.name}`}
+                className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-start justify-between"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center space-x-2 flex-wrap">
+                    <span className="text-sm font-bold text-slate-900">{t.name}</span>
+                    {!t.enabled && (
+                      <span className="text-[10px] uppercase font-semibold text-slate-400 border border-slate-300 rounded px-1">
+                        disabled
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center space-x-1 text-[12px] text-slate-600 mt-1 flex-wrap">
+                    <span className="font-mono bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">{t.class_name}</span>
+                    <span className="text-slate-400">on</span>
+                    <span className="font-mono bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded border border-rose-200">{t.event}</span>
+                    <span className="text-slate-400">→</span>
+                    <span className="font-mono bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded border border-indigo-200">{t.workflow_name}</span>
+                  </div>
+                  {t.condition && (
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      if <span className="font-mono">{t.condition}</span>
+                    </p>
+                  )}
+                  {t.parameter_map && Object.keys(t.parameter_map).length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {Object.entries(t.parameter_map).map(([k, v]) => (
+                        <span key={k} className="text-[10px] font-mono bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">
+                          {k}={String(v)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {t.description && <p className="text-[11px] text-slate-400 mt-1 italic">{t.description}</p>}
+                </div>
+                <button
+                  onClick={() => onDeleteTrigger(t.class_name, t.name)}
+                  className="ml-2 shrink-0 text-slate-400 hover:text-rose-600"
+                  title="Delete trigger"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Create Trigger Modal */}
+      {showCreateTrigger && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl border border-slate-200 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-slate-900 mb-1 flex items-center space-x-2">
+              <Zap className="h-5 w-5 text-rose-500" />
+              <span>Add Trigger</span>
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              When a node of the class is created/updated, the chosen workflow runs. The node's
+              properties are passed as parameters (e.g. <span className="font-mono">{"{uuid}"}</span>). Cycles are
+              rejected before saving.
+            </p>
+            <form onSubmit={handleTriggerSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Class</label>
+                  <select
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-rose-500"
+                    value={trgClass}
+                    onChange={(e) => setTrgClass(e.target.value)}
+                  >
+                    <option value="">Select class…</option>
+                    {tbox.classes.map((c) => (
+                      <option key={c.name} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Event</label>
+                  <select
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-rose-500"
+                    value={trgEvent}
+                    onChange={(e) => setTrgEvent(e.target.value as "create" | "update")}
+                  >
+                    <option value="create">create</option>
+                    <option value="update">update</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Trigger Name</label>
+                <input
+                  type="text"
+                  required
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-rose-500"
+                  value={trgName}
+                  onChange={(e) => setTrgName(e.target.value)}
+                  placeholder="e.g. on_order_created"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Run Workflow</label>
+                <select
+                  required
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-rose-500"
+                  value={trgWorkflow}
+                  onChange={(e) => setTrgWorkflow(e.target.value)}
+                >
+                  <option value="">Select workflow…</option>
+                  {workflowNames.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Condition (optional)</label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-rose-500"
+                    value={trgCondition}
+                    onChange={(e) => setTrgCondition(e.target.value)}
+                    placeholder="property path, fires if non-empty"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Order</label>
+                  <input
+                    type="number"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-rose-500"
+                    value={trgOrder}
+                    onChange={(e) => setTrgOrder(Number(e.target.value) || 0)}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Description</label>
+                <textarea
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-rose-500"
+                  rows={2}
+                  value={trgDesc}
+                  onChange={(e) => setTrgDesc(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    Parameter Map (workflow param ← value)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setTrgParams([...trgParams, { key: "", value: "" }])}
+                    className="text-xs text-rose-600 hover:text-rose-700 flex items-center space-x-1"
+                  >
+                    <Plus className="h-3 w-3" />
+                    <span>Add</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400 mb-2">
+                  Value is interpolated against the node, e.g. <span className="font-mono">{"{uuid}"}</span>,{" "}
+                  <span className="font-mono">{"{total}"}</span>, or a literal. Leave empty to pass all node properties through.
+                </p>
+                {trgParams.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 italic">No bindings — node properties passed flat.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {trgParams.map((row, i) => (
+                      <div key={i} className="flex items-center space-x-2">
+                        <input
+                          type="text"
+                          placeholder="param name"
+                          className="flex-1 px-2 py-1.5 border border-slate-300 rounded-lg text-sm font-mono focus:outline-none focus:border-rose-500"
+                          value={row.key}
+                          onChange={(e) => {
+                            const next = [...trgParams];
+                            next[i] = { ...next[i], key: e.target.value };
+                            setTrgParams(next);
+                          }}
+                        />
+                        <span className="text-slate-400 text-sm">←</span>
+                        <input
+                          type="text"
+                          placeholder="{uuid} or literal"
+                          className="flex-1 px-2 py-1.5 border border-slate-300 rounded-lg text-sm font-mono focus:outline-none focus:border-rose-500"
+                          value={row.value}
+                          onChange={(e) => {
+                            const next = [...trgParams];
+                            next[i] = { ...next[i], value: e.target.value };
+                            setTrgParams(next);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setTrgParams(trgParams.filter((_, j) => j !== i))}
+                          className="text-slate-400 hover:text-rose-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {trgError && (
+                <div className="flex items-start space-x-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>{trgError}</span>
+                </div>
+              )}
+
+              {trgReport && (
+                <div
+                  className={`text-sm rounded-lg p-2 border ${
+                    trgReport.valid
+                      ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+                      : "text-rose-700 bg-rose-50 border-rose-200"
+                  }`}
+                >
+                  {trgReport.valid ? (
+                    <span>✓ No cycle. Safe to add.</span>
+                  ) : (
+                    <span>
+                      ✗ Cycle: {trgReport.cycles.map((c) => c.join(" → ")).join("; ")}
+                    </span>
+                  )}
+                  {trgReport.unbounded.length > 0 && (
+                    <p className="text-amber-700 mt-1">⚠ Unbounded fan-out (loop_over): {trgReport.unbounded.join(", ")}</p>
+                  )}
+                  {trgReport.unresolved.length > 0 && (
+                    <p className="text-amber-700 mt-1">⚠ Dynamic class (unanalyzable): {trgReport.unresolved.join(", ")}</p>
+                  )}
+                </div>
+              )}
+
+              <div className="flex justify-between items-center pt-2">
+                <button
+                  type="button"
+                  onClick={handleTriggerPreview}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100"
+                >
+                  Validate
+                </button>
+                <div className="flex space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => { setShowCreateTrigger(false); resetTriggerForm(); }}
+                    className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium bg-white text-slate-700 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-3 py-2 bg-rose-600 text-white rounded-lg text-sm font-medium hover:bg-rose-700"
+                  >
+                    Add Trigger
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

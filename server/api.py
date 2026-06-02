@@ -87,6 +87,25 @@ class RelationshipCreate(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class TriggerCreate(BaseModel):
+    class_name: str
+    name: str
+    event: str  # "create" | "update"
+    workflow_name: str
+    condition: Optional[str] = None
+    enabled: bool = True
+    order: int = 0
+    description: Optional[str] = None
+    # param name -> value template interpolated against the full node (e.g. "{uuid}").
+    # Empty -> the node's properties are passed through flat.
+    parameter_map: Optional[Dict[str, Any]] = None
+
+
+class TriggerDelete(BaseModel):
+    class_name: str
+    name: str
+
+
 class WorkflowParameter(BaseModel):
     name: str
     type: str  # "string", "integer", "boolean", "uuid", "array"
@@ -165,6 +184,7 @@ def get_tbox():
         constraints = repo.list_constraints()
         connectors = repo.list_connectors()
         source_bindings = repo.list_source_bindings()
+        triggers = repo.list_triggers()
         
         # Build enriched classes with effective properties
         enriched_classes = []
@@ -287,6 +307,20 @@ def get_tbox():
                 }
                 for b in source_bindings
             ],
+            "triggers": [
+                {
+                    "class_name": t.class_name,
+                    "name": t.name,
+                    "event": t.event,
+                    "workflow_name": t.workflow_name,
+                    "condition": t.condition,
+                    "enabled": t.enabled,
+                    "order": t.order,
+                    "description": t.description,
+                    "parameter_map": t.parameter_map,
+                }
+                for t in triggers
+            ],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -362,6 +396,78 @@ def create_relationship(data: RelationshipCreate):
             merge=True,
         )
         return {"status": "success", "message": f"Relationship {data.name} ({data.id}) defined"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tbox/trigger")
+def create_trigger(data: TriggerCreate):
+    from data_oop.exceptions import TriggerCycleError, TBoxNotFoundError, TBoxConflictError
+    try:
+        graph = get_graph()
+        repo = FalkorTBoxRepository(graph)
+        repo.attach_trigger_to_class(
+            class_name=data.class_name,
+            name=data.name,
+            event=data.event,  # type: ignore[arg-type]
+            workflow_name=data.workflow_name,
+            condition=data.condition,
+            enabled=data.enabled,
+            order=data.order,
+            description=data.description,
+            parameter_map=data.parameter_map,
+        )
+        return {"status": "success", "message": f"Trigger {data.name} on {data.class_name} registered"}
+    except TriggerCycleError as e:
+        # 409: the trigger would close a callback loop. Surface the cycle to the UI.
+        raise HTTPException(status_code=409, detail={"message": str(e), "cycles": e.cycles})
+    except (TBoxNotFoundError, TBoxConflictError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tbox/trigger/delete")
+def delete_trigger(data: TriggerDelete):
+    try:
+        graph = get_graph()
+        repo = FalkorTBoxRepository(graph)
+        repo.delete_trigger(data.class_name, data.name)
+        return {"status": "success", "message": f"Trigger {data.name} on {data.class_name} deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tbox/triggers/validate")
+def validate_triggers(data: Optional[TriggerCreate] = None):
+    """Analyse the current trigger graph (optionally with one prospective trigger
+    added) for cycles and divergence, without saving anything. Powers the UI's
+    pre-save safety check."""
+    try:
+        graph = get_graph()
+        repo = FalkorTBoxRepository(graph)
+        extra = None
+        if data is not None:
+            from data_oop.models import TriggerDef
+            extra = TriggerDef(
+                name=data.name,
+                class_name=data.class_name,
+                event=data.event,  # type: ignore[arg-type]
+                workflow_name=data.workflow_name,
+                condition=data.condition,
+                enabled=data.enabled,
+                order=data.order,
+                description=data.description,
+                parameter_map=data.parameter_map or {},
+            )
+        report = repo.analyze_triggers(extra)
+        return {
+            "valid": report.valid,
+            "cycles": report.cycles,
+            "unbounded": report.unbounded,
+            "unresolved": report.unresolved,
+            "missing_workflows": report.missing_workflows,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

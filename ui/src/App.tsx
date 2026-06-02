@@ -80,6 +80,9 @@ export default function App() {
     createProperty,
     attachProperty,
     createRelationship,
+    createTrigger,
+    deleteTrigger,
+    validateTriggers,
   } = useTBox();
 
   const {
@@ -228,6 +231,9 @@ export default function App() {
             onCreateProperty={createProperty}
             onAttachProperty={attachProperty}
             onCreateRelationship={createRelationship}
+            onCreateTrigger={createTrigger}
+            onDeleteTrigger={deleteTrigger}
+            onValidateTriggers={validateTriggers}
           />
         )}
 

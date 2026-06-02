@@ -559,8 +559,13 @@ def run_workflow(
     graph: FalkorGraph,
     name: str,
     parameters: dict[str, Any],
+    _depth: int = 0,
 ) -> dict[str, Any]:
     """Retrieve a WorkflowDefinition from FalkorDB by name, and execute its steps dynamically.
+
+    ``_depth`` tracks how deep this run sits in a trigger -> workflow -> trigger
+    chain. It is threaded into the node upserts so that triggers those upserts
+    fire are bounded by ``MAX_TRIGGER_DEPTH``.
 
     Variable references in steps (e.g. "{event_name}" or "{create_event.uuid}") are resolved
     in real-time against the parameters and previously executed steps.
@@ -616,12 +621,14 @@ def run_workflow(
                     properties = interpolated.get("properties", {})
                     node_uuid = interpolated.get("uuid") or str(uuid.uuid4())
                     
-                    # Execute node creation
+                    # Execute node creation. Pass the current depth so any
+                    # triggers this node fires stay within MAX_TRIGGER_DEPTH.
                     upsert_abox_node(
                         graph=graph,
                         class_name=class_name,
                         uuid=node_uuid,
                         properties=properties,
+                        _depth=_depth,
                     )
                     
                     rollback_stack.append({
@@ -676,11 +683,12 @@ def run_workflow(
                     sub_params = interpolated.get("parameters", {})
                     if not sub_wf_name:
                         raise ValueError("Missing workflow_name for run_workflow step")
-                    # Call run_workflow recursively
+                    # Call run_workflow recursively, carrying the depth forward.
                     sub_results = run_workflow(
                         graph=graph,
                         name=sub_wf_name,
                         parameters=sub_params,
+                        _depth=_depth,
                     )
                     
                     rollback_stack.append({

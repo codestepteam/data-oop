@@ -62,6 +62,26 @@ export interface SourceBinding {
   links: SourceLink[];
 }
 
+export interface TriggerDef {
+  class_name: string;
+  name: string;
+  event: "create" | "update";
+  workflow_name: string;
+  condition: string | null;
+  enabled: boolean;
+  order: number;
+  description: string | null;
+  parameter_map: Record<string, string>;
+}
+
+export interface TriggerGraphReport {
+  valid: boolean;
+  cycles: string[][];
+  unbounded: string[];
+  unresolved: string[];
+  missing_workflows: string[];
+}
+
 export interface WorkflowStep {
   step_id: string;
   action: "create_node" | "create_relationship" | "run_workflow";

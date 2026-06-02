@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .falkor import FalkorGraph
+from .triggers import MAX_TRIGGER_DEPTH
 from .validator import NAME_RE
 
 
@@ -33,11 +34,18 @@ def upsert_abox_node(
     class_name: str,
     uuid: str,
     properties: dict[str, Any] | None = None,
+    fire_triggers: bool = True,
+    _depth: int = 0,
 ) -> ABoxNodeResult:
     """Create or update one ABox node for a ClassDef.
 
     The function validates that a matching TBox ClassDef exists, then MERGEs an
     ABox node with the domain class label only. It does not add an :ABox label.
+
+    When ``fire_triggers`` is true and the recursion depth is within
+    ``MAX_TRIGGER_DEPTH``, any class-level triggers registered for the resulting
+    ``create``/``update`` event are dispatched after the merge. Bulk paths (e.g.
+    source sync) pass ``fire_triggers=False`` to avoid mass firing.
     """
 
     label = _safe_identifier(class_name, "class")
@@ -47,6 +55,17 @@ def upsert_abox_node(
     props.pop("uuid", None)
 
     _require_class_def(graph, class_name)
+
+    dispatch = fire_triggers and _depth < MAX_TRIGGER_DEPTH
+    # Detect create-vs-update before the MERGE so we know which event to fire.
+    # Only pay for the extra MATCH when triggers may actually run.
+    existed = False
+    if dispatch:
+        rows = graph.query(
+            f"MATCH (n:{label} {{uuid: $uuid}}) RETURN count(n)", {"uuid": uuid}
+        ).result_set
+        existed = bool(rows and rows[0] and rows[0][0])
+
     set_clause, params = _set_clause("n", props)
     query = f"""
         MERGE (n:{label} {{uuid: $uuid}})
@@ -54,7 +73,19 @@ def upsert_abox_node(
         RETURN n.uuid
     """
     graph.query(query, {"uuid": uuid, **params})
-    return ABoxNodeResult(class_name=class_name, uuid=uuid, properties={"uuid": uuid, **props})
+    result = ABoxNodeResult(class_name=class_name, uuid=uuid, properties={"uuid": uuid, **props})
+
+    if dispatch:
+        from .triggers import dispatch_triggers
+
+        dispatch_triggers(
+            graph=graph,
+            class_name=class_name,
+            event="update" if existed else "create",
+            node=dict(result.properties),
+            depth=_depth,
+        )
+    return result
 
 
 def connect_and_upsert_abox_node(

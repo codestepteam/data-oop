@@ -36,6 +36,13 @@ from .sync import (
     materialize_source,
 )
 from .workflows import save_workflow, run_workflow, WorkflowBuilder
+from .triggers import (
+    MAX_TRIGGER_DEPTH,
+    TriggerGraphReport,
+    analyze_trigger_graph,
+    dispatch_triggers,
+    validate_trigger_graph,
+)
 from .dsl import (
     ClassBuilder,
     TBoxBuilder,
@@ -55,6 +62,7 @@ from .models import (
     RelationshipDef,
     SourceBinding,
     SourceLink,
+    TriggerDef,
     ValidationIssue,
     ValidationReport,
 )
@@ -113,6 +121,12 @@ __all__ = [
     "save_workflow",
     "run_workflow",
     "WorkflowBuilder",
+    "TriggerDef",
+    "TriggerGraphReport",
+    "MAX_TRIGGER_DEPTH",
+    "analyze_trigger_graph",
+    "validate_trigger_graph",
+    "dispatch_triggers",
     "dump_graph_to_file",
     "restore_graph_from_file",
 ]

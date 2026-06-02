@@ -29,3 +29,16 @@ class TBoxValidationError(TBoxError):
         self.report = report
         codes = ", ".join(issue.code for issue in report.errors())
         super().__init__(f"TBox validation failed: {codes}")
+
+
+class TriggerCycleError(TBoxConflictError):
+    """Raised when attaching a trigger would create a cycle in the trigger graph
+    (an infinite/divergent callback loop).
+
+    ``cycles`` is a list of cycles, each a list of trigger names forming the loop.
+    """
+
+    def __init__(self, cycles: list[list[str]]) -> None:
+        self.cycles = cycles
+        rendered = "; ".join(" -> ".join(cycle) for cycle in cycles)
+        super().__init__(f"Trigger cycle detected: {rendered}")

@@ -1,6 +1,6 @@
 [project]
 name = "data-oop"
-version = "0.1.3"
+version = "0.1.4"
 description = "Dynamic TBox ontology definition and validation library"
 readme = "AGENTS.md"
 requires-python = ">=3.11"

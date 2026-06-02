@@ -36,6 +36,8 @@ class FakeGraph:
 def test_upsert_abox_node_uses_domain_label_and_uuid_without_abox_label() -> None:
     graph = FakeGraph()
 
+    # fire_triggers=False keeps this a focused unit test of the MERGE query shape;
+    # trigger dispatch has its own coverage in test_triggers.py.
     result = upsert_abox_node(
         graph=graph,
         class_name="SalesChannel",
@@ -44,6 +46,7 @@ def test_upsert_abox_node_uses_domain_label_and_uuid_without_abox_label() -> Non
             "channel_code": "NAVER_SMARTSTORE",
             "name": "Naver Smartstore",
         },
+        fire_triggers=False,
     )
 
     assert result.uuid == "channel-naver-smartstore"

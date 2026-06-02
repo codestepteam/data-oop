@@ -67,11 +67,14 @@ def materialize_source(
     links_missing = 0
     for props, row in zip(mapped, rows):
         node_uuid = str(uuid4())
+        # Bulk materialization may upsert thousands of rows; do not fire triggers
+        # per row or a single sync could fan out into a trigger storm.
         upsert_abox_node(
             graph=graph,
             class_name=class_name,
             uuid=node_uuid,
             properties={**props, SYNCED_AT_PROP: synced_at, SOURCE_CONNECTOR_PROP: connector.name},
+            fire_triggers=False,
         )
         for link in binding.links:
             created = _materialize_link(
