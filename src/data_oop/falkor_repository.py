@@ -12,6 +12,7 @@ from .models import (
     ConstraintDef,
     EffectivePropertyDef,
     InterfaceDef,
+    MetricDef,
     OwnerKind,
     PropertyBinding,
     PropertyDef,
@@ -128,6 +129,12 @@ class FalkorTBoxRepository:
         if not connector:
             raise TBoxNotFoundError(f"ConnectorDef not found: {name}")
         return connector
+
+    def _require_metric(self, name: str) -> MetricDef:
+        metric = self.get_metric(name)
+        if not metric:
+            raise TBoxNotFoundError(f"MetricDef not found: {name}")
+        return metric
 
     def _require_owner(self, owner_kind: OwnerKind, owner_id: str) -> None:
         if owner_kind == "class":
@@ -1626,17 +1633,29 @@ class FalkorTBoxRepository:
 
     def delete_connector(self, name: str, *, detach: bool = False) -> None:
         self._require_connector(name)
-        rows = self._query(
+        binding_rows = self._query(
             "MATCH (:ClassDef)-[e:HAS_CONNECTOR]->(k:ConnectorDef {name: $name}) RETURN count(e)",
             {"name": name},
         )
-        has_ref = bool(rows and int(rows[0][0]) > 0)
-        if has_ref and not detach:
-            raise TBoxConflictError(f"ConnectorDef has source bindings: {name}")
+        metric_rows = self._query(
+            "MATCH (m:MetricDef)-[:USES_CONNECTOR]->(k:ConnectorDef {name: $name}) RETURN count(m)",
+            {"name": name},
+        )
+        has_binding = bool(binding_rows and int(binding_rows[0][0]) > 0)
+        has_metric = bool(metric_rows and int(metric_rows[0][0]) > 0)
+        if (has_binding or has_metric) and not detach:
+            raise TBoxConflictError(
+                f"ConnectorDef is in use (source bindings or metrics): {name}"
+            )
         # Edges must go before the node delete regardless of detach, else FalkorDB
-        # refuses to delete a node that still has relationships.
+        # refuses to delete a node that still has relationships. Metric nodes are
+        # removed outright (a metric without its connector cannot resolve).
         self._query(
             "MATCH (:ClassDef)-[e:HAS_CONNECTOR]->(k:ConnectorDef {name: $name}) DELETE e",
+            {"name": name},
+        )
+        self._query(
+            "MATCH (m:MetricDef)-[:USES_CONNECTOR]->(k:ConnectorDef {name: $name}) DETACH DELETE m",
             {"name": name},
         )
         self._query("MATCH (k:TBox:ConnectorDef {name: $name}) DELETE k", {"name": name})
@@ -1753,6 +1772,90 @@ class FalkorTBoxRepository:
             for row in rows
         ]
         return sorted(bindings, key=lambda value: value.class_name)
+
+    # ------------------------------------------------------------------
+    # Metrics (class <- named parameterized RDB query, resolved on demand)
+    # ------------------------------------------------------------------
+    def define_metric(self, metric: MetricDef, *, merge: bool = True) -> MetricDef:
+        """Attach (or update) a named parameterized query to a class. Stores only the
+        query spec — the connector, SQL and param map — never any fetched value."""
+        self._require_class(metric.class_name)
+        self._require_connector(metric.connector_name)
+        if not merge and self.get_metric(metric.name) is not None:
+            raise TBoxAlreadyExistsError(f"MetricDef already exists: {metric.name}")
+        uuid = self._stable_uuid("MetricDef", metric.name)
+        self._query(
+            """
+            MATCH (c:TBox:ClassDef {name: $class_name})
+            MATCH (k:TBox:ConnectorDef {name: $connector_name})
+            MERGE (m:TBox:MetricDef {name: $name})
+            SET m.uuid = coalesce(m.uuid, $uuid),
+                m.className = $class_name,
+                m.connectorName = $connector_name,
+                m.sql = $sql,
+                m.paramMap = $param_map,
+                m.resultKind = $result_kind,
+                m.valueColumn = $value_column,
+                m.ttlSeconds = $ttl_seconds,
+                m.description = $description
+            MERGE (c)-[:HAS_METRIC]->(m)
+            MERGE (m)-[:USES_CONNECTOR]->(k)
+            """,
+            {
+                "name": metric.name,
+                "uuid": uuid,
+                "class_name": metric.class_name,
+                "connector_name": metric.connector_name,
+                "sql": metric.sql,
+                "param_map": self._json(metric.param_map),
+                "result_kind": metric.result_kind,
+                "value_column": metric.value_column,
+                "ttl_seconds": metric.ttl_seconds,
+                "description": metric.description,
+            },
+        )
+        return metric
+
+    @staticmethod
+    def _row_to_metric(row: list[Any]) -> MetricDef:
+        return MetricDef(
+            name=row[0],
+            class_name=row[1],
+            connector_name=row[2],
+            sql=row[3],
+            param_map=FalkorTBoxRepository._parse_json(row[4]),
+            result_kind=row[5] or "scalar",
+            value_column=row[6] or "value",
+            ttl_seconds=row[7],
+            description=row[8],
+        )
+
+    _METRIC_RETURN = (
+        "m.name, m.className, m.connectorName, m.sql, m.paramMap, "
+        "m.resultKind, m.valueColumn, m.ttlSeconds, m.description"
+    )
+
+    def get_metric(self, name: str) -> MetricDef | None:
+        rows = self._query(
+            f"MATCH (m:TBox:MetricDef {{name: $name}}) RETURN {self._METRIC_RETURN}",
+            {"name": name},
+        )
+        return self._row_to_metric(rows[0]) if rows else None
+
+    def list_metrics(self, class_name: str | None = None) -> list[MetricDef]:
+        if class_name is not None:
+            rows = self._query(
+                f"MATCH (m:TBox:MetricDef {{className: $class_name}}) RETURN {self._METRIC_RETURN}",
+                {"class_name": class_name},
+            )
+        else:
+            rows = self._query(f"MATCH (m:TBox:MetricDef) RETURN {self._METRIC_RETURN}")
+        metrics = [self._row_to_metric(row) for row in rows]
+        return sorted(metrics, key=lambda value: value.name)
+
+    def delete_metric(self, name: str) -> None:
+        self._require_metric(name)
+        self._query("MATCH (m:TBox:MetricDef {name: $name}) DETACH DELETE m", {"name": name})
 
     # ------------------------------------------------------------------
     # Triggers (class-level callbacks: on create/update -> run workflow)

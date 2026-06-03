@@ -35,6 +35,7 @@ from .sync import (
     connect_and_materialize_source,
     materialize_source,
 )
+from .resolve import resolve_metric
 from .workflows import save_workflow, run_workflow, WorkflowBuilder
 from .triggers import (
     MAX_TRIGGER_DEPTH,
@@ -57,6 +58,7 @@ from .models import (
     EffectiveRelationshipSchema,
     InterfaceDef,
     MaterializeResult,
+    MetricDef,
     PropertyBinding,
     PropertyDef,
     RelationshipDef,
@@ -75,8 +77,10 @@ __all__ = [
     "SourceBinding",
     "SourceLink",
     "MaterializeResult",
+    "MetricDef",
     "materialize_source",
     "connect_and_materialize_source",
+    "resolve_metric",
     "register_executor",
     "get_executor",
     "fetch_rows",

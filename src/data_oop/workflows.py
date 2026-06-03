@@ -196,9 +196,9 @@ def validate_workflow(workflow: WorkflowDef) -> None:
 
     # 2. Check actions and required fields
     for step in workflow.steps:
-        if step.action not in ("create_node", "create_relationship", "run_workflow"):
+        if step.action not in ("create_node", "create_relationship", "run_workflow", "fetch_metric"):
             raise ValueError(f"Unsupported action: {step.action} in step {step.step_id}")
-        
+
         if step.action == "create_node":
             if not step.class_name:
                 raise ValueError(f"Step {step.step_id} (create_node) is missing class_name")
@@ -211,6 +211,9 @@ def validate_workflow(workflow: WorkflowDef) -> None:
         elif step.action == "run_workflow":
             if not step.workflow_name:
                 raise ValueError(f"Step {step.step_id} (run_workflow) is missing workflow_name")
+        elif step.action == "fetch_metric":
+            if not step.metric_name:
+                raise ValueError(f"Step {step.step_id} (fetch_metric) is missing metric_name")
 
     # 3. Check variable interpolations
     # Collect all valid parameter names
@@ -490,6 +493,7 @@ def save_workflow(
                 loop_over=step.get("loop_over"),
                 loop_var=step.get("loop_var"),
                 workflow_name=step.get("workflow_name"),
+                metric_name=step.get("metric_name"),
                 parameters=step.get("parameters") or {},
             ))
         else:
@@ -695,8 +699,27 @@ def run_workflow(
                         "type": "sub_workflow",
                         "results": sub_results
                     })
-                    
+
                     return sub_results
+                elif action == "fetch_metric":
+                    # Read-only: resolve a stored metric live and hand its value to
+                    # later steps as {step_id: {"value": ...}}. No graph mutation, so
+                    # nothing is pushed onto the rollback stack.
+                    from .falkor_repository import FalkorTBoxRepository
+                    from .resolve import resolve_metric
+
+                    metric_name = interpolated.get("metric_name")
+                    if not metric_name:
+                        raise ValueError(f"Missing metric_name for fetch_metric step: {step_id}")
+                    metric_params = interpolated.get("parameters", {}) or {}
+                    value = resolve_metric(
+                        repo=FalkorTBoxRepository(graph),
+                        graph=graph,
+                        metric_name=metric_name,
+                        node=context,
+                        params=metric_params,
+                    )
+                    return {"value": value}
                 else:
                     raise ValueError(f"Unsupported workflow action: {action}")
 

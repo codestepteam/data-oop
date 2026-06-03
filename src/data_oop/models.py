@@ -140,6 +140,39 @@ class SourceBinding:
     links: tuple[SourceLink, ...] = ()
 
 
+MetricResultKind = Literal["scalar", "row", "rows"]
+
+
+@dataclass(frozen=True)
+class MetricDef:
+    """A named, parameterized RDB query attached to a TBox class. The metric value
+    lives in the relational source; the graph stores only *how to fetch it* — the
+    connector, the SQL, and how to bind node values into it.
+
+    Unlike a materialized ``SourceBinding`` (which copies rows into ABox nodes), a
+    metric is resolved on demand: nothing is written to the graph unless a caller
+    explicitly persists the result. A class may carry many metrics.
+
+    ``sql`` uses neutral ``:name`` placeholders (e.g.
+    ``"SELECT sum(amount) AS value FROM orders WHERE customer_id = :cid"``).
+    ``param_map`` maps each placeholder to a template interpolated against the anchor
+    node — e.g. ``{"cid": "{customer_id}"}`` reads the node's ``customer_id``.
+    Templates without braces are literals. ``value_column`` names the column read for
+    ``result_kind="scalar"``/``"row"``. ``ttl_seconds`` enables an optional per-node
+    cache (``None`` = always live).
+    """
+
+    name: str
+    class_name: str
+    connector_name: str
+    sql: str
+    param_map: dict[str, str] = field(default_factory=dict)
+    result_kind: MetricResultKind = "scalar"
+    value_column: str = "value"
+    ttl_seconds: int | None = None
+    description: str | None = None
+
+
 @dataclass(frozen=True)
 class MaterializeResult:
     """Outcome of materializing a source-backed class from its RDB query."""
@@ -202,7 +235,7 @@ class ValidationReport:
             raise TBoxValidationError(self)
 
 
-WorkflowAction = Literal["create_node", "create_relationship", "run_workflow"]
+WorkflowAction = Literal["create_node", "create_relationship", "run_workflow", "fetch_metric"]
 WorkflowParameterType = Literal[
     "string", "integer", "float", "boolean", "date", "datetime", "email", "url", "phone", "uuid", "array"
 ]
@@ -234,6 +267,9 @@ class WorkflowStepDef:
     loop_over: str | None = None
     loop_var: str | None = None
     workflow_name: str | None = None
+    # For action="fetch_metric": the MetricDef to resolve. The fetched value is stored
+    # in the step's context entry as {"value": ...} for later steps to reference.
+    metric_name: str | None = None
     parameters: dict[str, Any] = field(default_factory=dict)
 
 

@@ -14,7 +14,7 @@ from data_oop import (
 _ROWS: list[dict] = []
 
 
-def _fake_executor(connector, sql):
+def _fake_executor(connector, sql, params=None):
     return list(_ROWS)
 
 

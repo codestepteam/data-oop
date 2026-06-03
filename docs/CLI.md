@@ -231,6 +231,68 @@ data-oop delete-connector --name prod_pg --detach
 
 ---
 
+## 5-B단계: 온디맨드 메트릭 (Metric) — 값은 RDB에 두고 조회법만 저장
+
+`bind-source`/`sync-source`(5단계)가 **행을 그래프로 복사**하는 반면, 메트릭은 정반대입니다. 매출·주문수 같은 수치 데이터는 RDB에 그대로 두고, 그래프에는 **"어떻게 조회하는지"(커넥터 + SQL + 노드 값 바인딩)만** 저장합니다. 값은 호출 시점에 라이브로 계산되며, 그래프에는 아무것도 쓰지 않습니다(선택적 TTL 캐시 제외).
+
+저장 구조: `(:TBox:ClassDef)-[:HAS_METRIC]->(:TBox:MetricDef)-[:USES_CONNECTOR]->(:TBox:ConnectorDef)`. 한 클래스에 메트릭 여러 개를 매달 수 있습니다.
+
+### 1. 메트릭 정의 (define-metric)
+
+SQL에는 중립 `:name` 플레이스홀더를 쓰고, `--param-map` 으로 각 플레이스홀더를 노드 속성 템플릿(`{customer_id}`)에 연결합니다. 값은 항상 드라이버 바인드 파라미터로 전달되어 SQL 인젝션이 차단됩니다.
+
+```bash
+data-oop define-metric --name revenue_last_30d --class-name Customer --connector prod_pg \
+  --sql "SELECT sum(amount) AS value FROM orders WHERE customer_id = :cid AND ts > now() - interval '30 day'" \
+  --param-map '{"cid":"{customer_id}"}' --result-kind scalar --ttl-seconds 3600 \
+  --description "최근 30일 매출"
+```
+
+- `--result-kind`: `scalar`(첫 행의 `--value-column`, 기본 `value`) | `row`(첫 행 dict) | `rows`(전체 행)
+- `--ttl-seconds`: 생략하면 항상 라이브. 지정하면 노드의 `metricsCache` 속성에 값을 캐시하고 TTL 안에서는 RDB를 건드리지 않습니다.
+
+### 2. 메트릭 해석 (resolve-metric)
+
+```bash
+# 앵커 노드의 속성으로 param_map 을 채워 라이브 조회
+data-oop resolve-metric --name revenue_last_30d --node-uuid <customer-uuid>
+# 출력: 340000
+
+# 노드 없이 바인드 값을 직접 지정 (param_map 보다 우선)
+data-oop resolve-metric --name revenue_last_30d --param cid=123 --no-cache
+```
+
+### 3. 워크플로우에서 사용 (fetch_metric 액션)
+
+저장된 워크플로우가 메트릭을 읽으려면 `fetch_metric` 스텝을 씁니다(읽기 전용, 그래프 미변경). 결과는 `{step_id: {"value": ...}}` 로 이후 스텝에 전달됩니다. 예: 주문 생성 트리거 → 고객 매출 조회 → 임계값 넘으면 세그먼트 연결.
+
+```python
+save_workflow(graph=graph, name="classify_customer",
+    parameters=[{"name": "customer_uuid", "type": "string"},
+                {"name": "customer_id", "type": "string"}],
+    steps=[
+        {"step_id": "rev", "action": "fetch_metric", "metric_name": "revenue_last_30d",
+         "parameters": {"cid": "{customer_id}"}},
+        {"step_id": "seg", "action": "create_relationship", "if_present": "rev.value",
+         "from_class": "Customer", "from_uuid": "{customer_uuid}",
+         "relationship_name": "IN_SEGMENT", "to_class": "Segment", "to_uuid": "seg-high-value"},
+    ])
+```
+
+> 메트릭 원본 수치는 RDB에 남고, 그래프에는 분류 결과(엣지)만 저장됩니다. 임계값 비교 연산자는 아직 DSL에 없으므로, SQL의 `HAVING` 으로 조건을 만족하는 행만 반환하게 하거나 `if_present` 로 존재성만 검사하세요.
+
+### 4. 메트릭 조회 및 삭제
+
+```bash
+data-oop list-metrics                       # 전체
+data-oop list-metrics --class-name Customer # 클래스 필터
+data-oop delete-metric --name revenue_last_30d
+```
+
+> 메트릭이 참조하는 커넥터는 `delete-connector` 가 차단합니다(`--detach` 로 메트릭까지 정리).
+
+---
+
 ## 6단계: 트리거 (클래스 콜백) — 생성/수정 시 워크플로우 실행
 
 특정 클래스의 ABox 노드가 **생성(create)되거나 수정(update)될 때** 자동으로 동작을 실행하고 싶을 때 트리거를 등록합니다. 핵심 원칙은 **콜백이 코드가 아니라 데이터**라는 것입니다. 트리거는 실행할 동작을 직접 담지 않고, 이미 FalkorDB에 저장된 **워크플로우(WorkflowDefinition)의 이름을 참조**합니다. 따라서 규칙 전체(언제·무엇을·어떤 조건에)가 그래프 안에 데이터로 존재하며, `db-dump`/`db-restore`로 그대로 이동합니다.
