@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from typing import Any, Literal, Protocol, runtime_checkable
 
-from .models import (
+from data_oop.schema.models import (
     ClassDef,
     ConnectorDef,
     ConstraintDef,
     EffectivePropertyDef,
     InterfaceDef,
-    MetricDef,
     PropertyBinding,
     PropertyDef,
     RelationshipDef,
     SourceBinding,
     SourceLink,
+    ViewDef,
 )
 
 
@@ -302,11 +302,11 @@ class TBoxRepository(Protocol):
 
     def list_source_bindings(self) -> list[SourceBinding]: ...
 
-    # Metric (class <- named parameterized RDB query)
-    def define_metric(self, metric: MetricDef, *, merge: bool = True) -> MetricDef: ...
+    # View (class <- named parameterized RDB query, resolved on demand to a table)
+    def define_view(self, view: ViewDef, *, merge: bool = True) -> ViewDef: ...
 
-    def get_metric(self, name: str) -> MetricDef | None: ...
+    def get_view(self, name: str) -> ViewDef | None: ...
 
-    def list_metrics(self, class_name: str | None = None) -> list[MetricDef]: ...
+    def list_views(self, class_name: str | None = None) -> list[ViewDef]: ...
 
-    def delete_metric(self, name: str) -> None: ...
+    def delete_view(self, name: str) -> None: ...

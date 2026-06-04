@@ -172,3 +172,64 @@ run_results = run_workflow(
 created_proj_uuid = run_results["create_new_project"]["uuid"]
 print(f"Workflow executed successfully. New project uuid: {created_proj_uuid}")
 ```
+
+---
+
+# 라이브러리 API
+
+`from data_oop import ...` 공개 심볼로 ABox 쿼리·View·스키마·워크플로우를 전부 다룬다. 외부 프로젝트(MCP 서버 등)는 이 패키지를 SDK로 import해 쓴다.
+
+## 시그니처 확인 — 코드가 진실원
+
+정확한 시그니처/docstring은 문서가 아니라 패키지에서 직접 본다 (문서는 stale 가능):
+
+```python
+import data_oop
+data_oop.describe_api()              # 전체 공개 API를 그룹별 + 라이브 시그니처로 출력
+data_oop.describe_api(verbose=True)  # docstring 전체
+help(data_oop)                       # 모듈 개요(그룹 맵 + 사용법)
+help(data_oop.abox_query)            # 심볼별 상세
+data_oop.__all__                     # raw export 목록
+```
+
+`py.typed` 포함 → IDE 자동완성/시그니처 팝업 네이티브 지원.
+
+## 두 가지 호출 형태
+
+- **`connect_and_*`** — 연결 파라미터를 받아 FalkorDB 연결까지 한 번에. 그래프 핸들 없이 호출. 외부 SDK용.
+- **그래프 핸들 버전** — 이미 `graph`(FalkorDB `select_graph` 결과)를 들고 있을 때. 여러 호출에서 연결 재사용.
+
+공통 연결 kwargs(keyword-only): `graph_name="data_oop", host="localhost", port=6380, username=None, password=None`.
+
+## 주요 진입점 (전체는 `describe_api()`)
+
+| 영역 | 함수 / 클래스 |
+|---|---|
+| ABox 읽기 | `abox_query`, `connect_and_abox_query` |
+| View 집계 | `resolve_view`, `connect_and_resolve_view` |
+| ABox 쓰기 | `upsert_abox_node`, `upsert_abox_relationship`, `delete_abox_element`, `clear_abox_nodes` (+ `connect_and_*`) |
+| RDB 동기화 | `materialize_source`; executor: `register_executor` / `get_executor` / `fetch_rows` |
+| 워크플로우 / 트리거 | `save_workflow`, `run_workflow`; `analyze_trigger_graph`, `validate_trigger_graph`, `dispatch_triggers` |
+| 검증 | `run_latest_falkor_abox_validation`, `store_latest_validation_report` |
+| TBox 로드 / 덤프 | `load_tbox_to_falkor`, `dump_graph_to_file`, `restore_graph_from_file` |
+| 스키마 CRUD | `FalkorTBoxRepository(graph)` — class/property/interface/relationship/constraint/connector/binding/view/trigger 메서드 |
+| 모델 (dataclass) | `ViewDef`, `ViewParam`, `ConnectorDef`, `SourceBinding`, `ClassDef`, ... |
+| DSL / 예외 | `TBoxBuilder`, `ClassBuilder`, `WorkflowBuilder`; `TBoxError` 계열 |
+
+## 외부 SDK 최소 예시 (MCP 등)
+
+```python
+from data_oop import connect_and_abox_query, connect_and_resolve_view
+
+CONN = dict(host="macmini", port=6380, graph_name="data_oop")
+
+# 1. 골드 고객 노드 조회 (read-only Cypher, 쓰기 DB 레벨 거부)
+nodes = connect_and_abox_query(
+    "MATCH (c:Customer) WHERE c.tier='gold' RETURN c.uuid, c", limit=50, **CONN)
+
+# 2. tier별 매출 상위 (RDB 라이브 집계, 한 쿼리)
+rows = connect_and_resolve_view(
+    view_name="top_customers", filters={"tier": "gold", "limit": 10}, **CONN)
+```
+
+> View 값은 그래프에 없음(RDB에 있음). `abox_query`로 노드를 좁히고, 집계는 `resolve_view`로 따로 가져와 `key_column`으로 맞춘다.

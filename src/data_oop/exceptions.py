@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .models import ValidationReport
+    from data_oop.schema.models import ValidationReport
 
 
 class TBoxError(Exception):

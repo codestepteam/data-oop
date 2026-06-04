@@ -8,9 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from falkordb import FalkorDB
 
-from data_oop.falkor_repository import FalkorTBoxRepository
-from data_oop.workflows import save_workflow, run_workflow
-from data_oop.falkor_validation import run_latest_falkor_abox_validation
+from data_oop.falkor.repository import FalkorTBoxRepository
+from data_oop.workflow.workflows import save_workflow, run_workflow
+from data_oop.falkor.validation import run_latest_falkor_abox_validation
 from data_oop.cli import load_dotenv
 
 load_dotenv()
@@ -184,7 +184,7 @@ def get_tbox():
         constraints = repo.list_constraints()
         connectors = repo.list_connectors()
         source_bindings = repo.list_source_bindings()
-        metrics = repo.list_metrics()
+        views = repo.list_views()
         triggers = repo.list_triggers()
         
         # Build enriched classes with effective properties
@@ -308,19 +308,18 @@ def get_tbox():
                 }
                 for b in source_bindings
             ],
-            "metrics": [
+            "views": [
                 {
-                    "name": m.name,
-                    "class_name": m.class_name,
-                    "connector_name": m.connector_name,
-                    "sql": m.sql,
-                    "param_map": m.param_map,
-                    "result_kind": m.result_kind,
-                    "value_column": m.value_column,
-                    "ttl_seconds": m.ttl_seconds,
-                    "description": m.description,
+                    "name": v.name,
+                    "class_name": v.class_name,
+                    "connector_name": v.connector_name,
+                    "sql": v.sql,
+                    "params": [{"name": p.name, "required": p.required} for p in v.params],
+                    "key_column": v.key_column,
+                    "ttl_seconds": v.ttl_seconds,
+                    "description": v.description,
                 }
-                for m in metrics
+                for v in views
             ],
             "triggers": [
                 {
@@ -463,7 +462,7 @@ def validate_triggers(data: Optional[TriggerCreate] = None):
         repo = FalkorTBoxRepository(graph)
         extra = None
         if data is not None:
-            from data_oop.models import TriggerDef
+            from data_oop.schema.models import TriggerDef
             extra = TriggerDef(
                 name=data.name,
                 class_name=data.class_name,
@@ -490,7 +489,7 @@ def validate_triggers(data: Optional[TriggerCreate] = None):
 @app.get("/api/workflows/parameter-types")
 def get_workflow_parameter_types():
     from typing import get_args
-    from data_oop.models import WorkflowParameterType
+    from data_oop.schema.models import WorkflowParameterType
     return list(get_args(WorkflowParameterType))
 
 
@@ -551,7 +550,7 @@ def create_workflow(data: WorkflowCreate):
 @app.post("/api/workflows/parse-parameters")
 def parse_workflow_parameters(data: ParseParametersRequest):
     try:
-        from data_oop.workflows import extract_parameters_from_steps
+        from data_oop.workflow.workflows import extract_parameters_from_steps
         steps_dict = [step.dict(exclude_none=True) for step in data.steps]
         extracted = extract_parameters_from_steps(steps_dict)
         return extracted
@@ -562,8 +561,8 @@ def parse_workflow_parameters(data: ParseParametersRequest):
 @app.post("/api/workflows/dsl")
 def preview_workflow_dsl(data: WorkflowCreate):
     try:
-        from data_oop.workflows import generate_workflow_dsl, extract_parameters_from_steps
-        from data_oop.models import WorkflowDef, WorkflowStepDef, WorkflowParameterDef
+        from data_oop.workflow.workflows import generate_workflow_dsl, extract_parameters_from_steps
+        from data_oop.schema.models import WorkflowDef, WorkflowStepDef, WorkflowParameterDef
         
         step_defs = []
         for step in data.steps:

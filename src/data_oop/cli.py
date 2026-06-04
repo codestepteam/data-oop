@@ -13,12 +13,14 @@ from falkordb import FalkorDB
 
 from data_oop import (
     FalkorTBoxRepository,
-    MetricDef,
     SourceLink,
+    ViewDef,
+    ViewParam,
+    abox_query,
     connect_and_clear_abox_nodes,
     connect_and_run_latest_falkor_abox_validation,
     materialize_source,
-    resolve_metric,
+    resolve_view,
     run_workflow,
     connect_and_upsert_abox_node,
     upsert_abox_relationship,
@@ -244,17 +246,18 @@ def cmd_inspect(args: argparse.Namespace) -> None:
             print(f"    links: {_format_json([asdict(link) for link in binding.links])}")
         print(f"    sql: {binding.sql}")
 
-    metrics = repo.list_metrics()
-    print(f"\n[Metrics] ({len(metrics)})")
-    for metric in metrics:
+    views = repo.list_views()
+    print(f"\n[Views] ({len(views)})")
+    for view in views:
+        key = f", key={view.key_column}" if view.key_column else ""
         print(
-            f"  - {metric.name} on {metric.class_name} <- {metric.connector_name} "
-            f"[result_kind={metric.result_kind}, value_column={metric.value_column}, "
-            f"ttl_seconds={metric.ttl_seconds or 'live'}] - {metric.description or ''}"
+            f"  - {view.name} on {view.class_name} <- {view.connector_name} "
+            f"[ttl_seconds={view.ttl_seconds or 'live'}{key}] - {view.description or ''}"
         )
-        if metric.param_map:
-            print(f"    param_map: {_format_json(metric.param_map)}")
-        print(f"    sql: {metric.sql}")
+        if view.params:
+            params = ", ".join(f"{p.name}{'*' if p.required else ''}" for p in view.params)
+            print(f"    params: {params}")
+        print(f"    sql: {view.sql}")
 
     # Inspect workflows
     try:
@@ -684,105 +687,105 @@ def cmd_sync_source(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_define_metric(args: argparse.Namespace) -> None:
-    """Attach a named parameterized RDB query to a class (resolved on demand, never copied)."""
+def cmd_define_view(args: argparse.Namespace) -> None:
+    """Attach a named parameterized RDB query to a class (resolved on demand to a table)."""
     _, graph = get_db_connection(args)
     repo = FalkorTBoxRepository(graph)
 
-    param_map = {}
-    if args.param_map:
-        try:
-            param_map = json.loads(args.param_map)
-        except json.JSONDecodeError as e:
-            print(f"Error: Invalid JSON for --param-map: {e}", file=sys.stderr)
+    params: list[ViewParam] = []
+    for raw in args.param or []:
+        name = raw.strip()
+        required = name.endswith("!")
+        if required:
+            name = name[:-1].strip()
+        if not name:
+            print(f"Error: --param must be NAME or NAME! (required), got: {raw}", file=sys.stderr)
             sys.exit(1)
+        params.append(ViewParam(name=name, required=required))
 
-    print(f"Defining metric '{args.name}' on class '{args.class_name}'...")
-    repo.define_metric(
-        MetricDef(
+    print(f"Defining view '{args.name}' on class '{args.class_name}'...")
+    repo.define_view(
+        ViewDef(
             name=args.name,
             class_name=args.class_name,
             connector_name=args.connector,
             sql=_read_sql_arg(args.sql),
-            param_map=param_map,
-            result_kind=args.result_kind,
-            value_column=args.value_column,
+            params=tuple(params),
+            key_column=args.key_column,
             ttl_seconds=args.ttl_seconds,
             description=args.description,
         )
     )
-    print("Metric defined successfully.")
+    print("View defined successfully.")
 
 
-def cmd_list_metrics(args: argparse.Namespace) -> None:
-    """List defined metrics (optionally filtered by class)."""
+def cmd_list_views(args: argparse.Namespace) -> None:
+    """List defined views (optionally filtered by class)."""
     _, graph = get_db_connection(args)
     repo = FalkorTBoxRepository(graph)
 
-    metrics = repo.list_metrics(class_name=args.class_name)
-    print(f"[Metrics] ({len(metrics)})")
-    for m in metrics:
+    views = repo.list_views(class_name=args.class_name)
+    print(f"[Views] ({len(views)})")
+    for v in views:
+        params = ", ".join(f"{p.name}{'*' if p.required else ''}" for p in v.params)
         print(
-            f"  - {m.name} on {m.class_name} <- {m.connector_name} "
-            f"[{m.result_kind}, ttl={m.ttl_seconds or 'live'}] - {m.description or ''}"
+            f"  - {v.name} on {v.class_name} <- {v.connector_name} "
+            f"[ttl={v.ttl_seconds or 'live'}] ({params}) - {v.description or ''}"
         )
 
 
-def cmd_delete_metric(args: argparse.Namespace) -> None:
-    """Delete a metric definition by name."""
+def cmd_delete_view(args: argparse.Namespace) -> None:
+    """Delete a view definition by name."""
     _, graph = get_db_connection(args)
     repo = FalkorTBoxRepository(graph)
 
-    print(f"Deleting metric '{args.name}'...")
-    repo.delete_metric(args.name)
-    print("Metric deleted successfully.")
+    print(f"Deleting view '{args.name}'...")
+    repo.delete_view(args.name)
+    print("View deleted successfully.")
 
 
-def cmd_resolve_metric(args: argparse.Namespace) -> None:
-    """Resolve a metric live and print its value. Optionally bind an anchor node."""
+def cmd_resolve_view(args: argparse.Namespace) -> None:
+    """Resolve a view live and print its rows as JSON. Filters are supplied with --filter."""
     _, graph = get_db_connection(args)
     repo = FalkorTBoxRepository(graph)
 
-    metric = repo.get_metric(args.name)
-    if metric is None:
-        print(f"Error: MetricDef not found: {args.name}", file=sys.stderr)
+    if repo.get_view(args.name) is None:
+        print(f"Error: ViewDef not found: {args.name}", file=sys.stderr)
         sys.exit(1)
 
-    node = None
-    if args.node_uuid:
-        from data_oop.falkor_abox import _safe_identifier
-
-        label = _safe_identifier(metric.class_name, "class")
-        rows = graph.query(
-            f"MATCH (n:{label} {{uuid: $uuid}}) RETURN properties(n)",
-            {"uuid": args.node_uuid},
-        ).result_set
-        if not rows or not rows[0] or not rows[0][0]:
-            print(f"Error: node not found: {metric.class_name} {args.node_uuid}", file=sys.stderr)
-            sys.exit(1)
-        node = dict(rows[0][0])
-
-    params = {}
-    for raw in args.param or []:
+    filters = {}
+    for raw in args.filter or []:
         if "=" not in raw:
-            print(f"Error: --param must be NAME=VALUE, got: {raw}", file=sys.stderr)
+            print(f"Error: --filter must be NAME=VALUE, got: {raw}", file=sys.stderr)
             sys.exit(1)
         key, value = raw.split("=", 1)
-        params[key.strip()] = value
+        filters[key.strip()] = value
 
     try:
-        value = resolve_metric(
+        rows = resolve_view(
             repo=repo,
             graph=graph,
-            metric_name=args.name,
-            node=node,
-            params=params or None,
+            view_name=args.name,
+            filters=filters or None,
             use_cache=not args.no_cache,
         )
     except Exception as e:
-        print(f"Error resolving metric: {e}", file=sys.stderr)
+        print(f"Error resolving view: {e}", file=sys.stderr)
         sys.exit(1)
-    print(json.dumps(value, ensure_ascii=False, default=str))
+    print(json.dumps(rows, ensure_ascii=False, default=str))
+
+
+def cmd_abox_query(args: argparse.Namespace) -> None:
+    """Run a read-only Cypher query against the ABox and print rows as JSON."""
+    _, graph = get_db_connection(args)
+
+    cypher = _read_sql_arg(args.cypher)
+    try:
+        rows = abox_query(graph, cypher, limit=args.limit)
+    except Exception as e:
+        print(f"Error running query: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(rows, ensure_ascii=False, default=str))
 
 
 def cmd_add_trigger(args: argparse.Namespace) -> None:
@@ -938,7 +941,7 @@ def main() -> None:
     parser_workflow.set_defaults(func=cmd_run_workflow)
 
     # inspect
-    parser_inspect = subparsers.add_parser("inspect", help="List all TBox definitions, metrics, bindings, triggers and workflows")
+    parser_inspect = subparsers.add_parser("inspect", help="List all TBox definitions, views, bindings, triggers and workflows")
     parser_inspect.set_defaults(func=cmd_inspect)
 
     # tbox-create-class
@@ -1067,36 +1070,40 @@ def main() -> None:
     p_sync.add_argument("--no-prune", action="store_true", help="Keep previously synced nodes instead of replacing")
     p_sync.set_defaults(func=cmd_sync_source)
 
-    # define-metric
-    p_def_metric = subparsers.add_parser("define-metric", help="Attach a named parameterized RDB query to a class (resolved on demand)")
-    p_def_metric.add_argument("--name", required=True, help="Metric name (unique)")
-    p_def_metric.add_argument("--class-name", required=True, help="ClassDef the metric hangs off")
-    p_def_metric.add_argument("--connector", required=True, help="Connector name")
-    p_def_metric.add_argument("--sql", required=True, help="SQL with :name placeholders, or @path to read from a file")
-    p_def_metric.add_argument("--param-map", help='JSON mapping of :placeholder -> node template, e.g. {"cid":"{customer_id}"}')
-    p_def_metric.add_argument("--result-kind", choices=["scalar", "row", "rows"], default="scalar", help="Default: scalar")
-    p_def_metric.add_argument("--value-column", default="value", help="Column read for scalar/row (default: value)")
-    p_def_metric.add_argument("--ttl-seconds", type=int, help="Per-node cache TTL; omit for always-live")
-    p_def_metric.add_argument("--description", help="Description")
-    p_def_metric.set_defaults(func=cmd_define_metric)
+    # define-view
+    p_def_view = subparsers.add_parser("define-view", help="Attach a named parameterized RDB query to a class (resolved on demand to a table)")
+    p_def_view.add_argument("--name", required=True, help="View name (unique)")
+    p_def_view.add_argument("--class-name", required=True, help="ClassDef the view hangs off")
+    p_def_view.add_argument("--connector", required=True, help="Connector name")
+    p_def_view.add_argument("--sql", required=True, help="SQL with :name placeholders (use GROUP BY to aggregate), or @path to read from a file")
+    p_def_view.add_argument("--param", action="append", help="Declared filter NAME, or NAME! for required. Repeatable.")
+    p_def_view.add_argument("--key-column", help="Result column that correlates rows back to ABox nodes (informational)")
+    p_def_view.add_argument("--ttl-seconds", type=int, help="Redis cache TTL (keyed by view+filters); omit for always-live")
+    p_def_view.add_argument("--description", help="Description")
+    p_def_view.set_defaults(func=cmd_define_view)
 
-    # list-metrics
-    p_list_metric = subparsers.add_parser("list-metrics", help="List defined metrics")
-    p_list_metric.add_argument("--class-name", help="Filter by class")
-    p_list_metric.set_defaults(func=cmd_list_metrics)
+    # list-views
+    p_list_view = subparsers.add_parser("list-views", help="List defined views")
+    p_list_view.add_argument("--class-name", help="Filter by class")
+    p_list_view.set_defaults(func=cmd_list_views)
 
-    # delete-metric
-    p_del_metric = subparsers.add_parser("delete-metric", help="Delete a metric definition by name")
-    p_del_metric.add_argument("--name", required=True, help="Metric name")
-    p_del_metric.set_defaults(func=cmd_delete_metric)
+    # delete-view
+    p_del_view = subparsers.add_parser("delete-view", help="Delete a view definition by name")
+    p_del_view.add_argument("--name", required=True, help="View name")
+    p_del_view.set_defaults(func=cmd_delete_view)
 
-    # resolve-metric
-    p_res_metric = subparsers.add_parser("resolve-metric", help="Resolve a metric live and print its value")
-    p_res_metric.add_argument("--name", required=True, help="Metric name")
-    p_res_metric.add_argument("--node-uuid", help="Anchor node uuid (its properties feed param_map templates)")
-    p_res_metric.add_argument("--param", action="append", help="Explicit bind override NAME=VALUE, repeatable")
-    p_res_metric.add_argument("--no-cache", action="store_true", help="Ignore the per-node TTL cache")
-    p_res_metric.set_defaults(func=cmd_resolve_metric)
+    # resolve-view
+    p_res_view = subparsers.add_parser("resolve-view", help="Resolve a view live and print its rows as JSON")
+    p_res_view.add_argument("--name", required=True, help="View name")
+    p_res_view.add_argument("--filter", action="append", help="Filter bind NAME=VALUE, repeatable")
+    p_res_view.add_argument("--no-cache", action="store_true", help="Ignore the Redis result cache")
+    p_res_view.set_defaults(func=cmd_resolve_view)
+
+    # abox-query
+    p_abox_query = subparsers.add_parser("abox-query", help="Run a read-only Cypher query against the ABox and print rows as JSON")
+    p_abox_query.add_argument("--cypher", required=True, help="Read-only Cypher (writes rejected at the DB level), or @path to read from a file")
+    p_abox_query.add_argument("--limit", type=int, default=100, help="Row cap appended when the query has no LIMIT (max 500, default: 100)")
+    p_abox_query.set_defaults(func=cmd_abox_query)
 
     # add-trigger
     p_add_trg = subparsers.add_parser("add-trigger", help="Register a class trigger: on create/update, run a workflow")

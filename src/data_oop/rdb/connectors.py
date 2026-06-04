@@ -16,19 +16,19 @@ import re
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from .exceptions import TBoxError
-from .models import ConnectorDef
+from data_oop.exceptions import TBoxError
+from data_oop.schema.models import ConnectorDef
 
 # An executor takes a connector + a SQL string + a bind-parameter dict and returns
 # rows as dicts (column -> value). Parameter values are ALWAYS passed through the
-# driver's bind machinery — never string-formatted into the SQL — so a metric query
-# carrying a node-supplied value cannot be turned into SQL injection.
+# driver's bind machinery — never string-formatted into the SQL — so a view query
+# carrying a caller-supplied filter value cannot be turned into SQL injection.
 Executor = Callable[[ConnectorDef, str, dict[str, Any]], list[dict[str, Any]]]
 
 _EXECUTORS: dict[str, Executor] = {}
 
 # Neutral named placeholder used in stored SQL: ``:name``. Each executor rewrites it
-# to its driver's own paramstyle so one metric query is portable across backends.
+# to its driver's own paramstyle so one view query is portable across backends.
 # The negative lookbehind leaves Postgres ``value::type`` casts untouched (only a
 # single colon followed by a letter is a placeholder).
 _NAMED_PARAM_RE = re.compile(r"(?<!:):([a-zA-Z_]\w*)")
@@ -40,6 +40,7 @@ def register_executor(kind: str, executor: Executor) -> None:
 
 
 def get_executor(kind: str) -> Executor:
+    """Return the registered executor for a connector ``kind`` (raises if none)."""
     executor = _EXECUTORS.get(kind)
     if executor is None:
         raise TBoxError(

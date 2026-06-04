@@ -16,12 +16,12 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from .connectors import fetch_rows
-from .exceptions import TBoxError, TBoxNotFoundError
-from .falkor import FalkorGraph
-from .falkor_abox import _require_relationship_def, _safe_identifier, upsert_abox_node
-from .models import MaterializeResult, SourceBinding, SourceLink
-from .repository import TBoxRepository
+from data_oop.rdb.connectors import fetch_rows
+from data_oop.exceptions import TBoxError, TBoxNotFoundError
+from data_oop.falkor.graph import FalkorGraph
+from data_oop.falkor.abox import _require_relationship_def, _safe_identifier, upsert_abox_node
+from data_oop.schema.models import MaterializeResult, SourceBinding, SourceLink
+from data_oop.schema.repository import TBoxRepository
 
 # Reserved bookkeeping properties written onto every materialized node. NAME_RE forbids a
 # leading underscore, so these are letter-led; treat them as reserved on source-backed classes.
@@ -207,7 +207,7 @@ def connect_and_materialize_source(
     """Connect to FalkorDB and materialize one source-backed class."""
     from falkordb import FalkorDB
 
-    from .falkor_repository import FalkorTBoxRepository
+    from data_oop.falkor.repository import FalkorTBoxRepository
 
     db = FalkorDB(host=host, port=port, username=username, password=password)
     graph = db.select_graph(graph_name)

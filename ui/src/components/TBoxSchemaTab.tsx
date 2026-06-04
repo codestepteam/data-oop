@@ -6,7 +6,7 @@ import type {
   TBoxRelationship,
   ConnectorDef,
   SourceBinding,
-  MetricDef,
+  ViewDef,
   TriggerDef,
   TriggerGraphReport,
 } from "../types";
@@ -21,7 +21,7 @@ interface TBoxSchemaTabProps {
     constraints: any[];
     connectors?: ConnectorDef[];
     source_bindings?: SourceBinding[];
-    metrics?: MetricDef[];
+    views?: ViewDef[];
     triggers?: TriggerDef[];
   };
   loading: boolean;
@@ -736,47 +736,49 @@ export function TBoxSchemaTab({
         </div>
       </div>
 
-      {/* On-demand Metrics (value stays in RDB; graph stores only the query spec) */}
+      {/* On-demand Views (data stays in RDB; graph stores only the query spec) */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <h3 className="font-bold text-slate-950 text-base mb-4 flex items-center space-x-2">
           <Gauge className="h-5 w-5 text-violet-500" />
-          <span>On-demand Metrics ({(tbox.metrics ?? []).length})</span>
+          <span>On-demand Views ({(tbox.views ?? []).length})</span>
         </h3>
-        {(tbox.metrics ?? []).length === 0 ? (
-          <p className="text-sm text-slate-400 italic">No metrics defined.</p>
+        {(tbox.views ?? []).length === 0 ? (
+          <p className="text-sm text-slate-400 italic">No views defined.</p>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {(tbox.metrics ?? []).map((m) => (
-              <div key={m.name} className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+            {(tbox.views ?? []).map((v) => (
+              <div key={v.name} className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <span className="text-sm font-bold text-slate-900">{m.name}</span>
+                    <span className="text-sm font-bold text-slate-900">{v.name}</span>
                     <span className="text-xs text-slate-400">on</span>
-                    <span className="text-xs font-mono text-slate-600">{m.class_name}</span>
+                    <span className="text-xs font-mono text-slate-600">{v.class_name}</span>
                   </div>
-                  <span className="text-[10px] font-mono bg-violet-100 text-violet-800 px-2 py-0.5 rounded-md border border-violet-200">
-                    {m.result_kind}
-                  </span>
+                  {v.key_column && (
+                    <span className="text-[10px] font-mono bg-violet-100 text-violet-800 px-2 py-0.5 rounded-md border border-violet-200">
+                      key: {v.key_column}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center space-x-2 mt-1">
                   <span className="text-xs text-slate-400">←</span>
                   <span className="text-xs font-mono bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md border border-amber-200">
-                    {m.connector_name}
+                    {v.connector_name}
                   </span>
                   <span className="text-[10px] text-slate-500">
-                    {m.ttl_seconds != null ? `cache ${m.ttl_seconds}s` : "live"}
+                    {v.ttl_seconds != null ? `cache ${v.ttl_seconds}s` : "live"}
                   </span>
                 </div>
-                <p className="text-[11px] font-mono text-slate-500 mt-2 line-clamp-2 break-all">{m.sql}</p>
+                <p className="text-[11px] font-mono text-slate-500 mt-2 line-clamp-2 break-all">{v.sql}</p>
                 <div className="flex flex-wrap gap-1 mt-2">
-                  {Object.entries(m.param_map).map(([k, v]) => (
-                    <span key={k} className="text-[10px] font-mono bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">
-                      {k}={v}
+                  {(v.params ?? []).map((p) => (
+                    <span key={p.name} className="text-[10px] font-mono bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">
+                      {p.name}{p.required ? "*" : ""}
                     </span>
                   ))}
                 </div>
-                {m.description && (
-                  <p className="text-xs text-slate-400 mt-1 italic">{m.description}</p>
+                {v.description && (
+                  <p className="text-xs text-slate-400 mt-1 italic">{v.description}</p>
                 )}
               </div>
             ))}

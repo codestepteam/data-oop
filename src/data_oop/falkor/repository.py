@@ -4,15 +4,14 @@ import json
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, uuid5
 
-from .exceptions import TBoxAlreadyExistsError, TBoxConflictError, TBoxNotFoundError
-from .falkor import FalkorGraph
-from .models import (
+from data_oop.exceptions import TBoxAlreadyExistsError, TBoxConflictError, TBoxNotFoundError
+from data_oop.falkor.graph import FalkorGraph
+from data_oop.schema.models import (
     ClassDef,
     ConnectorDef,
     ConstraintDef,
     EffectivePropertyDef,
     InterfaceDef,
-    MetricDef,
     OwnerKind,
     PropertyBinding,
     PropertyDef,
@@ -21,8 +20,10 @@ from .models import (
     SourceLink,
     TriggerDef,
     TriggerEvent,
+    ViewDef,
+    ViewParam,
 )
-from .triggers import TriggerGraphReport, analyze_trigger_graph, validate_trigger_graph
+from data_oop.workflow.triggers import TriggerGraphReport, analyze_trigger_graph, validate_trigger_graph
 
 
 class FalkorTBoxRepository:
@@ -130,11 +131,11 @@ class FalkorTBoxRepository:
             raise TBoxNotFoundError(f"ConnectorDef not found: {name}")
         return connector
 
-    def _require_metric(self, name: str) -> MetricDef:
-        metric = self.get_metric(name)
-        if not metric:
-            raise TBoxNotFoundError(f"MetricDef not found: {name}")
-        return metric
+    def _require_view(self, name: str) -> ViewDef:
+        view = self.get_view(name)
+        if not view:
+            raise TBoxNotFoundError(f"ViewDef not found: {name}")
+        return view
 
     def _require_owner(self, owner_kind: OwnerKind, owner_id: str) -> None:
         if owner_kind == "class":
@@ -1637,25 +1638,25 @@ class FalkorTBoxRepository:
             "MATCH (:ClassDef)-[e:HAS_CONNECTOR]->(k:ConnectorDef {name: $name}) RETURN count(e)",
             {"name": name},
         )
-        metric_rows = self._query(
-            "MATCH (m:MetricDef)-[:USES_CONNECTOR]->(k:ConnectorDef {name: $name}) RETURN count(m)",
+        view_rows = self._query(
+            "MATCH (v:ViewDef)-[:USES_CONNECTOR]->(k:ConnectorDef {name: $name}) RETURN count(v)",
             {"name": name},
         )
         has_binding = bool(binding_rows and int(binding_rows[0][0]) > 0)
-        has_metric = bool(metric_rows and int(metric_rows[0][0]) > 0)
-        if (has_binding or has_metric) and not detach:
+        has_view = bool(view_rows and int(view_rows[0][0]) > 0)
+        if (has_binding or has_view) and not detach:
             raise TBoxConflictError(
-                f"ConnectorDef is in use (source bindings or metrics): {name}"
+                f"ConnectorDef is in use (source bindings or views): {name}"
             )
         # Edges must go before the node delete regardless of detach, else FalkorDB
-        # refuses to delete a node that still has relationships. Metric nodes are
-        # removed outright (a metric without its connector cannot resolve).
+        # refuses to delete a node that still has relationships. View nodes are
+        # removed outright (a view without its connector cannot resolve).
         self._query(
             "MATCH (:ClassDef)-[e:HAS_CONNECTOR]->(k:ConnectorDef {name: $name}) DELETE e",
             {"name": name},
         )
         self._query(
-            "MATCH (m:MetricDef)-[:USES_CONNECTOR]->(k:ConnectorDef {name: $name}) DETACH DELETE m",
+            "MATCH (v:ViewDef)-[:USES_CONNECTOR]->(k:ConnectorDef {name: $name}) DETACH DELETE v",
             {"name": name},
         )
         self._query("MATCH (k:TBox:ConnectorDef {name: $name}) DELETE k", {"name": name})
@@ -1774,88 +1775,101 @@ class FalkorTBoxRepository:
         return sorted(bindings, key=lambda value: value.class_name)
 
     # ------------------------------------------------------------------
-    # Metrics (class <- named parameterized RDB query, resolved on demand)
+    # Views (class <- named parameterized RDB query, resolved on demand to a table)
     # ------------------------------------------------------------------
-    def define_metric(self, metric: MetricDef, *, merge: bool = True) -> MetricDef:
+    def define_view(self, view: ViewDef, *, merge: bool = True) -> ViewDef:
         """Attach (or update) a named parameterized query to a class. Stores only the
-        query spec — the connector, SQL and param map — never any fetched value."""
-        self._require_class(metric.class_name)
-        self._require_connector(metric.connector_name)
-        if not merge and self.get_metric(metric.name) is not None:
-            raise TBoxAlreadyExistsError(f"MetricDef already exists: {metric.name}")
-        uuid = self._stable_uuid("MetricDef", metric.name)
+        query spec — the connector, SQL, accepted filter params and cache TTL — never
+        any fetched value."""
+        self._require_class(view.class_name)
+        self._require_connector(view.connector_name)
+        if not merge and self.get_view(view.name) is not None:
+            raise TBoxAlreadyExistsError(f"ViewDef already exists: {view.name}")
+        uuid = self._stable_uuid("ViewDef", view.name)
         self._query(
             """
             MATCH (c:TBox:ClassDef {name: $class_name})
             MATCH (k:TBox:ConnectorDef {name: $connector_name})
-            MERGE (m:TBox:MetricDef {name: $name})
-            SET m.uuid = coalesce(m.uuid, $uuid),
-                m.className = $class_name,
-                m.connectorName = $connector_name,
-                m.sql = $sql,
-                m.paramMap = $param_map,
-                m.resultKind = $result_kind,
-                m.valueColumn = $value_column,
-                m.ttlSeconds = $ttl_seconds,
-                m.description = $description
-            MERGE (c)-[:HAS_METRIC]->(m)
-            MERGE (m)-[:USES_CONNECTOR]->(k)
+            MERGE (v:TBox:ViewDef {name: $name})
+            SET v.uuid = coalesce(v.uuid, $uuid),
+                v.className = $class_name,
+                v.connectorName = $connector_name,
+                v.sql = $sql,
+                v.params = $params,
+                v.keyColumn = $key_column,
+                v.ttlSeconds = $ttl_seconds,
+                v.description = $description
+            MERGE (c)-[:HAS_VIEW]->(v)
+            MERGE (v)-[:USES_CONNECTOR]->(k)
             """,
             {
-                "name": metric.name,
+                "name": view.name,
                 "uuid": uuid,
-                "class_name": metric.class_name,
-                "connector_name": metric.connector_name,
-                "sql": metric.sql,
-                "param_map": self._json(metric.param_map),
-                "result_kind": metric.result_kind,
-                "value_column": metric.value_column,
-                "ttl_seconds": metric.ttl_seconds,
-                "description": metric.description,
+                "class_name": view.class_name,
+                "connector_name": view.connector_name,
+                "sql": view.sql,
+                "params": self._json([{"name": p.name, "required": p.required} for p in view.params]),
+                "key_column": view.key_column,
+                "ttl_seconds": view.ttl_seconds,
+                "description": view.description,
             },
         )
-        return metric
+        return view
 
     @staticmethod
-    def _row_to_metric(row: list[Any]) -> MetricDef:
-        return MetricDef(
+    def _row_to_view(row: list[Any]) -> ViewDef:
+        raw = row[4]
+        if isinstance(raw, str):
+            try:
+                raw_params = json.loads(raw)
+            except json.JSONDecodeError:
+                raw_params = []
+        elif isinstance(raw, list):
+            raw_params = raw
+        else:
+            raw_params = []
+        params = tuple(
+            ViewParam(name=p["name"], required=bool(p.get("required", False)))
+            for p in raw_params
+            if isinstance(p, dict) and p.get("name")
+        )
+        return ViewDef(
             name=row[0],
             class_name=row[1],
             connector_name=row[2],
             sql=row[3],
-            param_map=FalkorTBoxRepository._parse_json(row[4]),
-            result_kind=row[5] or "scalar",
-            value_column=row[6] or "value",
-            ttl_seconds=row[7],
-            description=row[8],
+            params=params,
+            key_column=row[5],
+            ttl_seconds=row[6],
+            description=row[7],
         )
 
-    _METRIC_RETURN = (
-        "m.name, m.className, m.connectorName, m.sql, m.paramMap, "
-        "m.resultKind, m.valueColumn, m.ttlSeconds, m.description"
+    _VIEW_RETURN = (
+        "v.name, v.className, v.connectorName, v.sql, v.params, "
+        "v.keyColumn, v.ttlSeconds, v.description"
     )
 
-    def get_metric(self, name: str) -> MetricDef | None:
+    def get_view(self, name: str) -> ViewDef | None:
         rows = self._query(
-            f"MATCH (m:TBox:MetricDef {{name: $name}}) RETURN {self._METRIC_RETURN}",
+            f"MATCH (v:TBox:ViewDef {{name: $name}}) RETURN {self._VIEW_RETURN}",
             {"name": name},
         )
-        return self._row_to_metric(rows[0]) if rows else None
+        return self._row_to_view(rows[0]) if rows else None
 
-    def list_metrics(self, class_name: str | None = None) -> list[MetricDef]:
+    def list_views(self, class_name: str | None = None) -> list[ViewDef]:
         if class_name is not None:
             rows = self._query(
-                f"MATCH (m:TBox:MetricDef {{className: $class_name}}) RETURN {self._METRIC_RETURN}",
+                f"MATCH (v:TBox:ViewDef {{className: $class_name}}) RETURN {self._VIEW_RETURN}",
                 {"class_name": class_name},
             )
         else:
-            rows = self._query(f"MATCH (m:TBox:MetricDef) RETURN {self._METRIC_RETURN}")
-        metrics = [self._row_to_metric(row) for row in rows]
-        return sorted(metrics, key=lambda value: value.name)
+            rows = self._query(f"MATCH (v:TBox:ViewDef) RETURN {self._VIEW_RETURN}")
+        views = [self._row_to_view(row) for row in rows]
+        return sorted(views, key=lambda value: value.name)
 
-    def delete_metric(self, name: str) -> None:
-        self._require_metric(name)
-        self._query("MATCH (m:TBox:MetricDef {name: $name}) DETACH DELETE m", {"name": name})
+    def delete_view(self, name: str) -> None:
+        self._require_view(name)
+        self._query("MATCH (v:TBox:ViewDef {name: $name}) DETACH DELETE v", {"name": name})
 
     # ------------------------------------------------------------------
     # Triggers (class-level callbacks: on create/update -> run workflow)

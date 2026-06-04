@@ -7,9 +7,9 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from .falkor import FalkorGraph
-from .models import ValidationIssue, ValidationReport
-from .validator import NAME_RE
+from data_oop.falkor.graph import FalkorGraph
+from data_oop.schema.models import ValidationIssue, ValidationReport
+from data_oop.schema.validator import NAME_RE
 
 
 @dataclass(frozen=True)

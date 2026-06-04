@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .memory import InMemoryTBoxRepository
-from .repository import TBoxRepository
+from data_oop.memory import InMemoryTBoxRepository
+from data_oop.schema.repository import TBoxRepository
 
 
 class ClassBuilder:

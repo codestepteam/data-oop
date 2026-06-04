@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .models import TriggerDef
+from data_oop.schema.models import TriggerDef
 
 # Hard cap on how deep a trigger -> workflow -> trigger chain may recurse at
 # runtime. Static cycle detection prevents known loops; this guards the rest
@@ -207,7 +207,7 @@ def validate_trigger_graph(
 
     report = analyze_trigger_graph(triggers, workflow_steps)
     if report.cycles:
-        from .exceptions import TriggerCycleError
+        from data_oop.exceptions import TriggerCycleError
 
         raise TriggerCycleError(report.cycles)
     return report
@@ -220,7 +220,7 @@ def _fetch_node_props(graph: Any, class_name: str, uuid: Any) -> dict[str, Any] 
     """Read the full current property map of an ABox node."""
     if not uuid:
         return None
-    from .falkor_abox import _safe_identifier
+    from data_oop.falkor.abox import _safe_identifier
 
     label = _safe_identifier(class_name, "class")
     rows = graph.query(
@@ -262,8 +262,8 @@ def dispatch_triggers(
         return []
 
     # Lazy imports avoid an import cycle: workflows -> falkor_abox -> triggers.
-    from .falkor_repository import FalkorTBoxRepository
-    from .workflows import _interpolate, _resolve_path, run_workflow
+    from data_oop.falkor.repository import FalkorTBoxRepository
+    from data_oop.workflow.workflows import _interpolate, _resolve_path, run_workflow
 
     repo = FalkorTBoxRepository(graph)
     triggers = repo.get_triggers_for_class(class_name, event=event)  # enabled, ordered

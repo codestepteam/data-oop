@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .repository import TBoxRepository
+from data_oop.schema.repository import TBoxRepository
 
 
 class FalkorGraph(Protocol):
@@ -88,7 +88,7 @@ def load_tbox_to_falkor(
             if "empty key" not in str(exc).lower() and "not found" not in str(exc).lower():
                 raise
 
-    from .falkor_repository import FalkorTBoxRepository
+    from data_oop.falkor.repository import FalkorTBoxRepository
 
     falkor_repo = FalkorTBoxRepository(graph)
 

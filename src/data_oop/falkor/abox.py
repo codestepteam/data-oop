@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .falkor import FalkorGraph
-from .triggers import MAX_TRIGGER_DEPTH
-from .validator import NAME_RE
+from data_oop.falkor.graph import FalkorGraph
+from data_oop.workflow.triggers import MAX_TRIGGER_DEPTH
+from data_oop.schema.validator import NAME_RE
 
 
 @dataclass(frozen=True)
@@ -76,7 +76,7 @@ def upsert_abox_node(
     result = ABoxNodeResult(class_name=class_name, uuid=uuid, properties={"uuid": uuid, **props})
 
     if dispatch:
-        from .triggers import dispatch_triggers
+        from data_oop.workflow.triggers import dispatch_triggers
 
         dispatch_triggers(
             graph=graph,

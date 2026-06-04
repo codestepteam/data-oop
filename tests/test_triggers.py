@@ -12,7 +12,7 @@ from data_oop import (
     validate_trigger_graph,
 )
 from data_oop.exceptions import TBoxNotFoundError, TriggerCycleError
-from data_oop.triggers import MAX_TRIGGER_DEPTH, workflow_emits
+from data_oop.workflow.triggers import MAX_TRIGGER_DEPTH, workflow_emits
 
 
 # ---------------------------------------------------------------------------

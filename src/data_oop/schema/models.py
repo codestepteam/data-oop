@@ -140,35 +140,44 @@ class SourceBinding:
     links: tuple[SourceLink, ...] = ()
 
 
-MetricResultKind = Literal["scalar", "row", "rows"]
+@dataclass(frozen=True)
+class ViewParam:
+    """A filter accepted by a :class:`ViewDef`. ``required`` params must be supplied at
+    resolve time; the rest are optional."""
+
+    name: str
+    required: bool = False
 
 
 @dataclass(frozen=True)
-class MetricDef:
-    """A named, parameterized RDB query attached to a TBox class. The metric value
-    lives in the relational source; the graph stores only *how to fetch it* — the
-    connector, the SQL, and how to bind node values into it.
+class ViewDef:
+    """A named, parameterized RDB query attached to a TBox class. Resolves to a *table*
+    (list of rows) on demand: the data lives in the relational source, the graph stores
+    only the query spec — connector, SQL, and the filter params it accepts.
 
-    Unlike a materialized ``SourceBinding`` (which copies rows into ABox nodes), a
-    metric is resolved on demand: nothing is written to the graph unless a caller
-    explicitly persists the result. A class may carry many metrics.
+    Unlike a materialized ``SourceBinding`` (which copies rows into ABox nodes), a view
+    is resolved on demand and never written to the graph. Crucially, a view runs
+    **once** and lets the RDB do any aggregation (``GROUP BY``) in a single query, so
+    listing/aggregating across many entities never fans out into N round-trips. A
+    single-entity lookup is just the same view filtered down to one key.
 
     ``sql`` uses neutral ``:name`` placeholders (e.g.
-    ``"SELECT sum(amount) AS value FROM orders WHERE customer_id = :cid"``).
-    ``param_map`` maps each placeholder to a template interpolated against the anchor
-    node — e.g. ``{"cid": "{customer_id}"}`` reads the node's ``customer_id``.
-    Templates without braces are literals. ``value_column`` names the column read for
-    ``result_kind="scalar"``/``"row"``. ``ttl_seconds`` enables an optional per-node
-    cache (``None`` = always live).
+    ``"SELECT customer_id, sum(amount) AS revenue FROM orders WHERE tier = :tier"
+    " GROUP BY customer_id"``). Values come from caller-supplied ``filters`` at resolve
+    time, bound through the driver — never string-formatted into the SQL — so a filter
+    value can never become SQL injection. ``params`` declares the accepted filters; a
+    ``required`` one must be supplied. ``key_column`` names the result column that
+    correlates rows back to this class's ABox nodes — informational only, since the
+    graph and the RDB are separate stores and the caller joins them. ``ttl_seconds``
+    enables a Redis result cache keyed by view + filters (``None`` = always live).
     """
 
     name: str
     class_name: str
     connector_name: str
     sql: str
-    param_map: dict[str, str] = field(default_factory=dict)
-    result_kind: MetricResultKind = "scalar"
-    value_column: str = "value"
+    params: tuple[ViewParam, ...] = ()
+    key_column: str | None = None
     ttl_seconds: int | None = None
     description: str | None = None
 
@@ -230,12 +239,12 @@ class ValidationReport:
 
     def raise_if_invalid(self) -> None:
         if not self.valid:
-            from .exceptions import TBoxValidationError
+            from data_oop.exceptions import TBoxValidationError
 
             raise TBoxValidationError(self)
 
 
-WorkflowAction = Literal["create_node", "create_relationship", "run_workflow", "fetch_metric"]
+WorkflowAction = Literal["create_node", "create_relationship", "run_workflow", "fetch_view"]
 WorkflowParameterType = Literal[
     "string", "integer", "float", "boolean", "date", "datetime", "email", "url", "phone", "uuid", "array"
 ]
@@ -267,9 +276,10 @@ class WorkflowStepDef:
     loop_over: str | None = None
     loop_var: str | None = None
     workflow_name: str | None = None
-    # For action="fetch_metric": the MetricDef to resolve. The fetched value is stored
-    # in the step's context entry as {"value": ...} for later steps to reference.
-    metric_name: str | None = None
+    # For action="fetch_view": the ViewDef to resolve. The fetched rows are stored in
+    # the step's context entry as {"value": [...]} for later steps to reference. The
+    # step's interpolated ``parameters`` become the view's filters.
+    view_name: str | None = None
     parameters: dict[str, Any] = field(default_factory=dict)
 
 

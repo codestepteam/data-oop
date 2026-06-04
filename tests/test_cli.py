@@ -7,19 +7,20 @@ from uuid import UUID
 import pytest
 
 from data_oop.cli import main
-from data_oop.models import (
+from data_oop.schema.models import (
     ClassDef,
     ConnectorDef,
     ConstraintDef,
     EffectivePropertyDef,
     InterfaceDef,
-    MetricDef,
     PropertyBinding,
     PropertyDef,
     RelationshipDef,
     SourceBinding,
     SourceLink,
     TriggerDef,
+    ViewDef,
+    ViewParam,
 )
 
 
@@ -560,13 +561,13 @@ def test_cli_inspect_lists_full_tbox_content(mock_get_db, mock_repo_class, capsy
             ),
         )
     ]
-    repo.list_metrics.return_value = [
-        MetricDef(
+    repo.list_views.return_value = [
+        ViewDef(
             name="revenue_last_30d",
             class_name="Customer",
             connector_name="warehouse",
-            sql="SELECT sum(amount) AS value FROM orders WHERE customer_id = :cid",
-            param_map={"cid": "{customer_id}"},
+            sql="SELECT sum(amount) AS revenue FROM orders WHERE customer_id = :cid",
+            params=(ViewParam(name="cid", required=True),),
             ttl_seconds=3600,
             description="Recent revenue",
         )
@@ -589,8 +590,8 @@ def test_cli_inspect_lists_full_tbox_content(mock_get_db, mock_repo_class, capsy
     assert "[Connectors] (1)" in out
     assert "[Source Bindings] (1)" in out
     assert "SELECT customer_id FROM customers" in out
-    assert "[Metrics] (1)" in out
+    assert "[Views] (1)" in out
     assert "revenue_last_30d" in out
-    assert 'param_map: {"cid": "{customer_id}"}' in out
+    assert "params: cid*" in out
     assert "steps_json" in out
     assert 'parameter_map: {"customer_id": "{uuid}"}' in out

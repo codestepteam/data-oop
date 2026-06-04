@@ -7,6 +7,9 @@
 - 필요한 라이브러리 함수가 없으면 먼저 `src/data_oop`에 함수를 추가/고도화하고, 그 함수를 사용해서 변경한다.
 - 반복되는 작업 흐름은 스크립트에 임시로 두지 말고 라이브러리 함수로 추출한다.
 - 라이브러리 함수에는 테스트를 추가하고, 실제 FalkorDB 변경 전/후 검증 가능한 형태로 만든다.
+- 공개 API(`data_oop.__all__`에 노출되는 함수/메서드/dataclass)는 **타입 힌트가 붙은 명시적 시그니처**와 **docstring**을 반드시 작성한다. docstring은 무엇을 하는지·핵심 인자·반환을 1줄 이상으로 적는다. `connect_and_*` 변형도 동일.
+  - 이유: `data_oop.describe_api()`가 `__all__`을 introspect해 시그니처 + docstring 첫 줄을 그룹별로 출력한다. 이게 API 레퍼런스의 단일 진실원이므로, 시그니처/docstring을 빼먹으면 레퍼런스에 구멍이 난다. 별도 `.md`에 시그니처를 손으로 적어 stale 시키지 말 것 — 코드가 진실원이다.
+  - 새 공개 심볼 추가 시: 타입 힌트 + docstring 작성 → `__init__.py`의 `__all__`과 re-export 추가 → 적절하면 `_API_GROUPS`에 모듈 라벨 추가.
 - 이 프로젝트의 목적은 라이브 TBox를 운영하면서 동시에 TBox 라이브러리를 계속 고도화하는 것이다.
 - ABox validation은 버전/revision 없이 최신 TBox 기준으로만 실행한다.
 - validation 실행 시 기존 `ValidationRun`/`ValidationIssue`는 모두 삭제하고 최신 결과만 남긴다.

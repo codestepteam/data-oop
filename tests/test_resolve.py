@@ -3,18 +3,19 @@ from falkordb import FalkorDB
 
 from data_oop import (
     FalkorTBoxRepository,
-    MetricDef,
     TBoxConflictError,
     TBoxNotFoundError,
+    ViewDef,
+    ViewParam,
     register_executor,
-    resolve_metric,
+    resolve_view,
     run_workflow,
     save_workflow,
     upsert_abox_node,
 )
 
 # A controllable in-test executor: it records every (sql, params) it receives and
-# returns the rows the test set in _ROWS. Recording lets us assert that node values
+# returns the rows the test set in _ROWS. Recording lets us assert that filter values
 # are passed as *bind parameters* (never formatted into the SQL string).
 _ROWS: list[dict] = []
 _CALLS: list[dict] = []
@@ -42,15 +43,25 @@ def _reset():
 def graph():
     db = FalkorDB(host="localhost", port=6380)
     g = db.select_graph("resolve_test_temp")
-    try:
-        g.delete()
-    except Exception:
-        pass
+    conn = g.client.connection
+
+    def _clean():
+        try:
+            g.delete()
+        except Exception:
+            pass
+        # View results are cached in the same Redis instance, separate from the graph,
+        # so they must be cleared between tests too.
+        try:
+            keys = conn.keys("doop:viewcache:resolve_test_temp:*")
+            if keys:
+                conn.delete(*keys)
+        except Exception:
+            pass
+
+    _clean()
     yield g
-    try:
-        g.delete()
-    except Exception:
-        pass
+    _clean()
 
 
 @pytest.fixture
@@ -66,160 +77,142 @@ def _define_revenue(repo, **overrides):
         name="revenue_last_30d",
         class_name="Customer",
         connector_name="fake_db",
-        sql="SELECT sum(amount) AS value FROM orders WHERE customer_id = :cid",
-        param_map={"cid": "{customer_id}"},
-        result_kind="scalar",
+        sql="SELECT sum(amount) AS revenue FROM orders WHERE customer_id = :cid",
+        params=(ViewParam(name="cid", required=False),),
     )
     kwargs.update(overrides)
-    return repo.define_metric(MetricDef(**kwargs))
+    return repo.define_view(ViewDef(**kwargs))
 
 
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
-def test_define_and_get_metric_roundtrip(repo):
-    _define_revenue(repo, ttl_seconds=3600, description="30d revenue")
-    got = repo.get_metric("revenue_last_30d")
+def test_define_and_get_view_roundtrip(repo):
+    _define_revenue(repo, key_column="customer_id", ttl_seconds=3600, description="30d revenue")
+    got = repo.get_view("revenue_last_30d")
     assert got is not None
     assert got.class_name == "Customer"
     assert got.connector_name == "fake_db"
-    assert got.param_map == {"cid": "{customer_id}"}
-    assert got.result_kind == "scalar"
-    assert got.value_column == "value"
+    assert got.params == (ViewParam(name="cid", required=False),)
+    assert got.key_column == "customer_id"
     assert got.ttl_seconds == 3600
     assert got.description == "30d revenue"
 
 
-def test_list_metrics_and_filter_by_class(repo):
+def test_list_views_and_filter_by_class(repo):
     repo.create_class("Product")
     _define_revenue(repo)
-    repo.define_metric(MetricDef(name="stock", class_name="Product", connector_name="fake_db", sql="SELECT 1 AS value"))
+    repo.define_view(ViewDef(name="stock", class_name="Product", connector_name="fake_db", sql="SELECT 1 AS qty"))
 
-    assert {m.name for m in repo.list_metrics()} == {"revenue_last_30d", "stock"}
-    assert [m.name for m in repo.list_metrics(class_name="Customer")] == ["revenue_last_30d"]
+    assert {v.name for v in repo.list_views()} == {"revenue_last_30d", "stock"}
+    assert [v.name for v in repo.list_views(class_name="Customer")] == ["revenue_last_30d"]
 
 
-def test_define_metric_unknown_class_or_connector_raises(repo):
+def test_define_view_unknown_class_or_connector_raises(repo):
     with pytest.raises(TBoxNotFoundError):
-        repo.define_metric(MetricDef(name="x", class_name="Nope", connector_name="fake_db", sql="SELECT 1"))
+        repo.define_view(ViewDef(name="x", class_name="Nope", connector_name="fake_db", sql="SELECT 1"))
     with pytest.raises(TBoxNotFoundError):
-        repo.define_metric(MetricDef(name="x", class_name="Customer", connector_name="nope", sql="SELECT 1"))
+        repo.define_view(ViewDef(name="x", class_name="Customer", connector_name="nope", sql="SELECT 1"))
 
 
-def test_delete_metric(repo, graph):
+def test_delete_view(repo):
     _define_revenue(repo)
-    repo.delete_metric("revenue_last_30d")
-    assert repo.get_metric("revenue_last_30d") is None
+    repo.delete_view("revenue_last_30d")
+    assert repo.get_view("revenue_last_30d") is None
     with pytest.raises(TBoxNotFoundError):
-        repo.delete_metric("revenue_last_30d")
+        repo.delete_view("revenue_last_30d")
 
 
 # ---------------------------------------------------------------------------
 # Resolution
 # ---------------------------------------------------------------------------
-def test_resolve_scalar_returns_value_column(repo, graph):
+def test_resolve_returns_rows(repo, graph):
     global _ROWS
     _define_revenue(repo)
-    _ROWS = [{"value": 340000}]
-    out = resolve_metric(repo=repo, graph=graph, metric_name="revenue_last_30d",
-                         node={"customer_id": "123"})
-    assert out == 340000
+    _ROWS = [{"revenue": 340000}]
+    out = resolve_view(repo=repo, graph=graph, view_name="revenue_last_30d", filters={"cid": "123"})
+    assert out == [{"revenue": 340000}]
 
 
-def test_resolve_row_and_rows(repo, graph):
+def test_resolve_aggregate_rows(repo, graph):
     global _ROWS
-    repo.define_metric(MetricDef(name="m_row", class_name="Customer", connector_name="fake_db",
-                                 sql="SELECT a, b", result_kind="row"))
-    repo.define_metric(MetricDef(name="m_rows", class_name="Customer", connector_name="fake_db",
-                                 sql="SELECT a", result_kind="rows"))
-    _ROWS = [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
-    assert resolve_metric(repo=repo, graph=graph, metric_name="m_row") == {"a": 1, "b": 2}
-    assert resolve_metric(repo=repo, graph=graph, metric_name="m_rows") == [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
+    repo.define_view(ViewDef(name="top", class_name="Customer", connector_name="fake_db",
+                             sql="SELECT customer_id, sum(amount) AS revenue FROM orders GROUP BY customer_id"))
+    _ROWS = [{"customer_id": "a", "revenue": 10}, {"customer_id": "b", "revenue": 20}]
+    out = resolve_view(repo=repo, graph=graph, view_name="top")
+    assert out == [{"customer_id": "a", "revenue": 10}, {"customer_id": "b", "revenue": 20}]
 
 
-def test_scalar_empty_result_is_none(repo, graph):
+def test_resolve_empty_result_is_empty_list(repo, graph):
     _define_revenue(repo)
-    out = resolve_metric(repo=repo, graph=graph, metric_name="revenue_last_30d", node={"customer_id": "x"})
-    assert out is None
+    out = resolve_view(repo=repo, graph=graph, view_name="revenue_last_30d", filters={"cid": "x"})
+    assert out == []
 
 
-def test_param_map_interpolated_against_node_and_bound_not_formatted(repo, graph):
+def test_filters_bound_not_formatted(repo, graph):
     global _ROWS
     _define_revenue(repo)
-    _ROWS = [{"value": 1}]
-    resolve_metric(repo=repo, graph=graph, metric_name="revenue_last_30d",
-                   node={"customer_id": "abc'; DROP TABLE orders;--"})
-    # The node value flows through bind params, and the SQL text is untouched — so a
+    _ROWS = [{"revenue": 1}]
+    resolve_view(repo=repo, graph=graph, view_name="revenue_last_30d",
+                 filters={"cid": "abc'; DROP TABLE orders;--"})
+    # The filter value flows through bind params, and the SQL text is untouched — so a
     # malicious value can never become SQL.
     assert _CALLS[-1]["params"] == {"cid": "abc'; DROP TABLE orders;--"}
     assert ":cid" in _CALLS[-1]["sql"]
     assert "DROP TABLE" not in _CALLS[-1]["sql"]
 
 
-def test_explicit_params_override_param_map(repo, graph):
-    global _ROWS
-    _define_revenue(repo)
-    _ROWS = [{"value": 1}]
-    resolve_metric(repo=repo, graph=graph, metric_name="revenue_last_30d",
-                   node={"customer_id": "123"}, params={"cid": "999"})
-    assert _CALLS[-1]["params"] == {"cid": "999"}
+def test_required_filter_missing_raises(repo, graph):
+    _define_revenue(repo, params=(ViewParam(name="cid", required=True),))
+    with pytest.raises(ValueError, match="required"):
+        resolve_view(repo=repo, graph=graph, view_name="revenue_last_30d")
 
 
-def test_resolve_unknown_metric_raises(repo, graph):
+def test_resolve_unknown_view_raises(repo, graph):
     with pytest.raises(TBoxNotFoundError):
-        resolve_metric(repo=repo, graph=graph, metric_name="ghost")
+        resolve_view(repo=repo, graph=graph, view_name="ghost")
 
 
 # ---------------------------------------------------------------------------
-# TTL cache
+# Redis result cache
 # ---------------------------------------------------------------------------
-def test_ttl_cache_serves_fresh_and_refetches_when_stale(repo, graph):
+def test_ttl_cache_serves_from_redis_and_bypass(repo, graph):
     global _ROWS
     _define_revenue(repo, ttl_seconds=3600)
-    upsert_abox_node(graph=graph, class_name="Customer", uuid="c1", properties={"customer_id": "123"})
 
-    def node():
-        rows = graph.query("MATCH (n:Customer {uuid:$u}) RETURN properties(n)", {"u": "c1"}).result_set
-        return dict(rows[0][0])
-
-    _ROWS = [{"value": 100}]
-    v1 = resolve_metric(repo=repo, graph=graph, metric_name="revenue_last_30d",
-                        node=node(), now="2026-06-02T00:00:00+00:00")
-    assert v1 == 100
+    _ROWS = [{"revenue": 100}]
+    v1 = resolve_view(repo=repo, graph=graph, view_name="revenue_last_30d", filters={"cid": "123"})
+    assert v1 == [{"revenue": 100}]
     assert len(_CALLS) == 1
 
-    # Within TTL: served from the node's cache, the executor is NOT called again even
+    # Within TTL: served from the Redis cache, the executor is NOT called again even
     # though the underlying rows changed.
-    _ROWS = [{"value": 999}]
-    v2 = resolve_metric(repo=repo, graph=graph, metric_name="revenue_last_30d",
-                        node=node(), now="2026-06-02T00:30:00+00:00")
-    assert v2 == 100
+    _ROWS = [{"revenue": 999}]
+    v2 = resolve_view(repo=repo, graph=graph, view_name="revenue_last_30d", filters={"cid": "123"})
+    assert v2 == [{"revenue": 100}]
     assert len(_CALLS) == 1
 
-    # Past TTL: refetch, get the new value, write the cache again.
-    v3 = resolve_metric(repo=repo, graph=graph, metric_name="revenue_last_30d",
-                        node=node(), now="2026-06-02T02:00:00+00:00")
-    assert v3 == 999
+    # use_cache=False bypasses the cache and refetches the fresh rows.
+    v3 = resolve_view(repo=repo, graph=graph, view_name="revenue_last_30d",
+                      filters={"cid": "123"}, use_cache=False)
+    assert v3 == [{"revenue": 999}]
     assert len(_CALLS) == 2
 
 
-def test_no_cache_flag_bypasses_cache(repo, graph):
+def test_cache_key_varies_by_filters(repo, graph):
     global _ROWS
     _define_revenue(repo, ttl_seconds=3600)
-    upsert_abox_node(graph=graph, class_name="Customer", uuid="c1", properties={"customer_id": "123"})
-    node = {"uuid": "c1", "customer_id": "123"}
-
-    _ROWS = [{"value": 100}]
-    resolve_metric(repo=repo, graph=graph, metric_name="revenue_last_30d", node=node, now="2026-06-02T00:00:00+00:00")
-    resolve_metric(repo=repo, graph=graph, metric_name="revenue_last_30d", node=node,
-                   use_cache=False, now="2026-06-02T00:10:00+00:00")
+    _ROWS = [{"revenue": 1}]
+    resolve_view(repo=repo, graph=graph, view_name="revenue_last_30d", filters={"cid": "a"})
+    # Different filters => different cache key => a fresh fetch, not the cached row.
+    resolve_view(repo=repo, graph=graph, view_name="revenue_last_30d", filters={"cid": "b"})
     assert len(_CALLS) == 2
 
 
 # ---------------------------------------------------------------------------
-# fetch_metric workflow action (end-to-end)
+# fetch_view workflow action (end-to-end)
 # ---------------------------------------------------------------------------
-def test_fetch_metric_workflow_links_node_to_segment(repo, graph):
+def test_fetch_view_workflow_links_node_to_segment(repo, graph):
     global _ROWS
     repo.create_class("Segment")
     repo.define_relationship(name="IN_SEGMENT", from_class="Customer", to_class="Segment")
@@ -235,7 +228,7 @@ def test_fetch_metric_workflow_links_node_to_segment(repo, graph):
             {"name": "customer_id", "type": "string"},
         ],
         steps=[
-            {"step_id": "rev", "action": "fetch_metric", "metric_name": "revenue_last_30d",
+            {"step_id": "rev", "action": "fetch_view", "view_name": "revenue_last_30d",
              "parameters": {"cid": "{customer_id}"}},
             {"step_id": "seg", "action": "create_relationship", "if_present": "rev.value",
              "from_class": "Customer", "from_uuid": "{customer_uuid}",
@@ -243,11 +236,11 @@ def test_fetch_metric_workflow_links_node_to_segment(repo, graph):
         ],
     )
 
-    _ROWS = [{"value": 500000}]
+    _ROWS = [{"revenue": 500000}]
     run_workflow(graph=graph, name="classify_customer",
                  parameters={"customer_uuid": "c1", "customer_id": "123"})
 
-    # The metric value (live) was used to gate the link; only the derived edge is stored.
+    # The view rows (live) gated the link; only the derived edge is stored.
     assert _CALLS[-1]["params"] == {"cid": "123"}
     edges = graph.query(
         "MATCH (c:Customer)-[:IN_SEGMENT]->(s:Segment) RETURN c.uuid, s.uuid"
@@ -255,27 +248,27 @@ def test_fetch_metric_workflow_links_node_to_segment(repo, graph):
     assert edges == [["c1", "seg-high"]]
 
 
-def test_fetch_metric_missing_metric_name_rejected(repo, graph):
-    with pytest.raises(ValueError, match="metric_name"):
+def test_fetch_view_missing_view_name_rejected(repo, graph):
+    with pytest.raises(ValueError, match="view_name"):
         save_workflow(
             graph=graph,
             name="bad",
             parameters=[],
-            steps=[{"step_id": "x", "action": "fetch_metric"}],
+            steps=[{"step_id": "x", "action": "fetch_view"}],
         )
 
 
 # ---------------------------------------------------------------------------
-# Connector deletion guards against orphaning metrics
+# Connector deletion guards against orphaning views
 # ---------------------------------------------------------------------------
-def test_delete_connector_blocked_while_metric_uses_it(repo):
+def test_delete_connector_blocked_while_view_uses_it(repo):
     _define_revenue(repo)
     with pytest.raises(TBoxConflictError):
         repo.delete_connector("fake_db")
 
 
-def test_delete_connector_detach_removes_metric(repo):
+def test_delete_connector_detach_removes_view(repo):
     _define_revenue(repo)
     repo.delete_connector("fake_db", detach=True)
-    assert repo.get_metric("revenue_last_30d") is None
+    assert repo.get_view("revenue_last_30d") is None
     assert repo.get_connector("fake_db") is None

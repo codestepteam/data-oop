@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .exceptions import TBoxNotFoundError
-from .models import (
+from data_oop.exceptions import TBoxNotFoundError
+from data_oop.schema.models import (
     ClassDef,
     ConstraintDef,
     EffectiveClassSchema,
@@ -16,7 +16,7 @@ from .models import (
     ValidationIssue,
     ValidationReport,
 )
-from .repository import TBoxRepository
+from data_oop.schema.repository import TBoxRepository
 
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 

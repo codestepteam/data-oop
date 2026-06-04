@@ -8,9 +8,9 @@ from datetime import date, datetime
 from typing import Any
 from urllib.parse import urlparse
 
-from .falkor import FalkorGraph
-from .falkor_abox import ABoxNodeResult, upsert_abox_node, upsert_abox_relationship
-from .models import WorkflowDef, WorkflowStepDef, WorkflowParameterDef
+from data_oop.falkor.graph import FalkorGraph
+from data_oop.falkor.abox import ABoxNodeResult, upsert_abox_node, upsert_abox_relationship
+from data_oop.schema.models import WorkflowDef, WorkflowStepDef, WorkflowParameterDef
 
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -196,7 +196,7 @@ def validate_workflow(workflow: WorkflowDef) -> None:
 
     # 2. Check actions and required fields
     for step in workflow.steps:
-        if step.action not in ("create_node", "create_relationship", "run_workflow", "fetch_metric"):
+        if step.action not in ("create_node", "create_relationship", "run_workflow", "fetch_view"):
             raise ValueError(f"Unsupported action: {step.action} in step {step.step_id}")
 
         if step.action == "create_node":
@@ -211,9 +211,9 @@ def validate_workflow(workflow: WorkflowDef) -> None:
         elif step.action == "run_workflow":
             if not step.workflow_name:
                 raise ValueError(f"Step {step.step_id} (run_workflow) is missing workflow_name")
-        elif step.action == "fetch_metric":
-            if not step.metric_name:
-                raise ValueError(f"Step {step.step_id} (fetch_metric) is missing metric_name")
+        elif step.action == "fetch_view":
+            if not step.view_name:
+                raise ValueError(f"Step {step.step_id} (fetch_view) is missing view_name")
 
     # 3. Check variable interpolations
     # Collect all valid parameter names
@@ -493,7 +493,7 @@ def save_workflow(
                 loop_over=step.get("loop_over"),
                 loop_var=step.get("loop_var"),
                 workflow_name=step.get("workflow_name"),
-                metric_name=step.get("metric_name"),
+                view_name=step.get("view_name"),
                 parameters=step.get("parameters") or {},
             ))
         else:
@@ -701,23 +701,24 @@ def run_workflow(
                     })
 
                     return sub_results
-                elif action == "fetch_metric":
-                    # Read-only: resolve a stored metric live and hand its value to
-                    # later steps as {step_id: {"value": ...}}. No graph mutation, so
-                    # nothing is pushed onto the rollback stack.
-                    from .falkor_repository import FalkorTBoxRepository
-                    from .resolve import resolve_metric
+                elif action == "fetch_view":
+                    # Read-only: resolve a stored view live and hand its rows to later
+                    # steps as {step_id: {"value": [...]}}. No graph mutation, so nothing
+                    # is pushed onto the rollback stack. The step's interpolated
+                    # ``parameters`` (already resolved against the node context above)
+                    # become the view's filters.
+                    from data_oop.falkor.repository import FalkorTBoxRepository
+                    from data_oop.rdb.views import resolve_view
 
-                    metric_name = interpolated.get("metric_name")
-                    if not metric_name:
-                        raise ValueError(f"Missing metric_name for fetch_metric step: {step_id}")
-                    metric_params = interpolated.get("parameters", {}) or {}
-                    value = resolve_metric(
+                    view_name = interpolated.get("view_name")
+                    if not view_name:
+                        raise ValueError(f"Missing view_name for fetch_view step: {step_id}")
+                    view_filters = interpolated.get("parameters", {}) or {}
+                    value = resolve_view(
                         repo=FalkorTBoxRepository(graph),
                         graph=graph,
-                        metric_name=metric_name,
-                        node=context,
-                        params=metric_params,
+                        view_name=view_name,
+                        filters=view_filters,
                     )
                     return {"value": value}
                 else:

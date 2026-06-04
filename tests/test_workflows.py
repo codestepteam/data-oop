@@ -484,8 +484,8 @@ def test_nested_workflow_rollback_on_failure(falkor_graph) -> None:
 
 
 def test_workflow_validation_and_dsl_generation() -> None:
-    from data_oop.models import WorkflowDef, WorkflowStepDef, WorkflowParameterDef
-    from data_oop.workflows import validate_workflow, generate_workflow_dsl, extract_parameters_from_steps
+    from data_oop.schema.models import WorkflowDef, WorkflowStepDef, WorkflowParameterDef
+    from data_oop.workflow.workflows import validate_workflow, generate_workflow_dsl, extract_parameters_from_steps
     
     # 1. Valid WorkflowDef
     steps = (
@@ -638,8 +638,8 @@ def test_workflow_validation_and_dsl_generation() -> None:
 
 
 def test_workflow_parameter_value_validation() -> None:
-    from data_oop.models import WorkflowParameterDef
-    from data_oop.workflows import validate_workflow_parameter_values
+    from data_oop.schema.models import WorkflowParameterDef
+    from data_oop.workflow.workflows import validate_workflow_parameter_values
 
     valid_uuid = str(uuid.uuid4())
     params = (
@@ -712,8 +712,8 @@ def test_workflow_parameter_value_validation() -> None:
 
 
 def test_circular_and_forward_references_validation() -> None:
-    from data_oop.models import WorkflowDef, WorkflowStepDef
-    from data_oop.workflows import validate_workflow
+    from data_oop.schema.models import WorkflowDef, WorkflowStepDef
+    from data_oop.workflow.workflows import validate_workflow
 
     # 1. Forward reference (step_1 references step_2 which is defined later)
     forward_steps = (
@@ -753,11 +753,11 @@ def test_circular_and_forward_references_validation() -> None:
 
 
 def test_rollback_continues_on_individual_rollback_failure(falkor_graph, monkeypatch) -> None:
-    from data_oop.workflows import run_workflow, save_workflow
-    import data_oop.workflows
+    from data_oop.workflow.workflows import run_workflow, save_workflow
+    import data_oop.workflow.workflows
     
     rollback_calls = []
-    original_rollback = data_oop.workflows._execute_rollback_item
+    original_rollback = data_oop.workflow.workflows._execute_rollback_item
     
     def mock_rollback(graph, item):
         rollback_calls.append(item)
@@ -765,7 +765,7 @@ def test_rollback_continues_on_individual_rollback_failure(falkor_graph, monkeyp
             raise Exception("Simulated Rollback Query Failure")
         original_rollback(graph, item)
         
-    monkeypatch.setattr(data_oop.workflows, "_execute_rollback_item", mock_rollback)
+    monkeypatch.setattr(data_oop.workflow.workflows, "_execute_rollback_item", mock_rollback)
     
     steps = [
         {

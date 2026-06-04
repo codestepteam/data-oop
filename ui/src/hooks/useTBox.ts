@@ -5,7 +5,7 @@ import type {
   TBoxRelationship,
   ConnectorDef,
   SourceBinding,
-  MetricDef,
+  ViewDef,
   TriggerDef,
   TriggerGraphReport,
 } from "../types";
@@ -31,7 +31,7 @@ export function useTBox() {
     constraints: any[];
     connectors?: ConnectorDef[];
     source_bindings?: SourceBinding[];
-    metrics?: MetricDef[];
+    views?: ViewDef[];
     triggers?: TriggerDef[];
   }>({ classes: [], interfaces: [], properties: [], relationships: [], constraints: [] });
   const [loadingTBox, setLoadingTBox] = useState(false);

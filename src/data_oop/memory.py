@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from .exceptions import TBoxAlreadyExistsError, TBoxConflictError, TBoxNotFoundError
-from .models import (
+from data_oop.exceptions import TBoxAlreadyExistsError, TBoxConflictError, TBoxNotFoundError
+from data_oop.schema.models import (
     ClassDef,
     ConnectorDef,
     ConstraintDef,

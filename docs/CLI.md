@@ -231,65 +231,82 @@ data-oop delete-connector --name prod_pg --detach
 
 ---
 
-## 5-B단계: 온디맨드 메트릭 (Metric) — 값은 RDB에 두고 조회법만 저장
+## 5-B단계: 온디맨드 뷰 (View) — 데이터는 RDB에 두고 조회법만 저장
 
-`bind-source`/`sync-source`(5단계)가 **행을 그래프로 복사**하는 반면, 메트릭은 정반대입니다. 매출·주문수 같은 수치 데이터는 RDB에 그대로 두고, 그래프에는 **"어떻게 조회하는지"(커넥터 + SQL + 노드 값 바인딩)만** 저장합니다. 값은 호출 시점에 라이브로 계산되며, 그래프에는 아무것도 쓰지 않습니다(선택적 TTL 캐시 제외).
+`bind-source`/`sync-source`(5단계)가 **행을 그래프로 복사**하는 반면, 뷰는 정반대입니다. 매출·주문수 같은 데이터는 RDB에 그대로 두고, 그래프에는 **"어떻게 조회하는지"(커넥터 + SQL + 받는 필터)만** 저장합니다. 값은 호출 시점에 라이브로 계산되며 그래프에는 아무것도 쓰지 않습니다(선택적 Redis 캐시 제외).
 
-저장 구조: `(:TBox:ClassDef)-[:HAS_METRIC]->(:TBox:MetricDef)-[:USES_CONNECTOR]->(:TBox:ConnectorDef)`. 한 클래스에 메트릭 여러 개를 매달 수 있습니다.
+뷰는 노드마다 한 번씩 도는 게 아니라 **단 한 번** 실행됩니다. 집계(`GROUP BY`)는 RDB가 한 쿼리로 처리하므로, 여러 엔티티를 나열·집계해도 N번 왕복하지 않습니다. 단일 엔티티 조회는 그 뷰를 키 하나로 필터링한 것일 뿐입니다.
 
-### 1. 메트릭 정의 (define-metric)
+저장 구조: `(:TBox:ClassDef)-[:HAS_VIEW]->(:TBox:ViewDef)-[:USES_CONNECTOR]->(:TBox:ConnectorDef)`. 한 클래스에 뷰 여러 개를 매달 수 있습니다.
 
-SQL에는 중립 `:name` 플레이스홀더를 쓰고, `--param-map` 으로 각 플레이스홀더를 노드 속성 템플릿(`{customer_id}`)에 연결합니다. 값은 항상 드라이버 바인드 파라미터로 전달되어 SQL 인젝션이 차단됩니다.
+### 1. 뷰 정의 (define-view)
 
-```bash
-data-oop define-metric --name revenue_last_30d --class-name Customer --connector prod_pg \
-  --sql "SELECT sum(amount) AS value FROM orders WHERE customer_id = :cid AND ts > now() - interval '30 day'" \
-  --param-map '{"cid":"{customer_id}"}' --result-kind scalar --ttl-seconds 3600 \
-  --description "최근 30일 매출"
-```
-
-- `--result-kind`: `scalar`(첫 행의 `--value-column`, 기본 `value`) | `row`(첫 행 dict) | `rows`(전체 행)
-- `--ttl-seconds`: 생략하면 항상 라이브. 지정하면 노드의 `metricsCache` 속성에 값을 캐시하고 TTL 안에서는 RDB를 건드리지 않습니다.
-
-### 2. 메트릭 해석 (resolve-metric)
+SQL에는 중립 `:name` 플레이스홀더를 쓰고, `--param` 으로 받을 필터를 선언합니다(`NAME!` 은 필수). 값은 호출 시점의 `--filter` 로 들어오며 항상 드라이버 바인드 파라미터로 전달되어 SQL 인젝션이 차단됩니다.
 
 ```bash
-# 앵커 노드의 속성으로 param_map 을 채워 라이브 조회
-data-oop resolve-metric --name revenue_last_30d --node-uuid <customer-uuid>
-# 출력: 340000
-
-# 노드 없이 바인드 값을 직접 지정 (param_map 보다 우선)
-data-oop resolve-metric --name revenue_last_30d --param cid=123 --no-cache
+data-oop define-view --name top_customers --class-name Customer --connector prod_pg \
+  --sql "SELECT customer_id, sum(amount) AS revenue FROM orders WHERE tier = :tier \
+         GROUP BY customer_id ORDER BY revenue DESC LIMIT :limit" \
+  --param tier! --param limit --key-column customer_id --ttl-seconds 3600 \
+  --description "tier별 매출 상위 고객"
 ```
 
-### 3. 워크플로우에서 사용 (fetch_metric 액션)
+- `--param NAME` / `--param NAME!`: 받는 필터 선언. `!` 은 resolve 시 필수.
+- `--key-column`: 결과 행을 ABox 노드와 상관시키는 컬럼(정보용). 그래프와 RDB는 별도 저장소라 자동 조인하지 않고, 호출자가 이 컬럼으로 맞춥니다.
+- `--ttl-seconds`: 생략하면 항상 라이브. 지정하면 같은 FalkorDB(Redis) 인스턴스에 `뷰+필터` 키로 결과를 캐시하고 TTL 안에서는 RDB를 건드리지 않습니다.
 
-저장된 워크플로우가 메트릭을 읽으려면 `fetch_metric` 스텝을 씁니다(읽기 전용, 그래프 미변경). 결과는 `{step_id: {"value": ...}}` 로 이후 스텝에 전달됩니다. 예: 주문 생성 트리거 → 고객 매출 조회 → 임계값 넘으면 세그먼트 연결.
+### 2. 뷰 해석 (resolve-view)
+
+```bash
+# 필터를 넣어 라이브 조회 (테이블 반환)
+data-oop resolve-view --name top_customers --filter tier=gold --filter limit=10
+# 출력: [{"customer_id": "C1", "revenue": 5000}, ...]
+
+# 단일 엔티티 = 키 하나로 필터 / 캐시 무시
+data-oop resolve-view --name customer_revenue --filter customer_id=123 --no-cache
+```
+
+### 3. 워크플로우에서 사용 (fetch_view 액션)
+
+저장된 워크플로우가 뷰를 읽으려면 `fetch_view` 스텝을 씁니다(읽기 전용, 그래프 미변경). 스텝의 `parameters`(노드 컨텍스트로 interpolate됨)가 뷰의 필터가 되고, 결과 행은 `{step_id: {"value": [...]}}` 로 이후 스텝에 전달됩니다. 예: 주문 생성 트리거 → 고객 매출 조회 → 임계값 넘으면 세그먼트 연결.
 
 ```python
 save_workflow(graph=graph, name="classify_customer",
     parameters=[{"name": "customer_uuid", "type": "string"},
                 {"name": "customer_id", "type": "string"}],
     steps=[
-        {"step_id": "rev", "action": "fetch_metric", "metric_name": "revenue_last_30d",
-         "parameters": {"cid": "{customer_id}"}},
+        {"step_id": "rev", "action": "fetch_view", "view_name": "customer_revenue",
+         "parameters": {"customer_id": "{customer_id}"}},
         {"step_id": "seg", "action": "create_relationship", "if_present": "rev.value",
          "from_class": "Customer", "from_uuid": "{customer_uuid}",
          "relationship_name": "IN_SEGMENT", "to_class": "Segment", "to_uuid": "seg-high-value"},
     ])
 ```
 
-> 메트릭 원본 수치는 RDB에 남고, 그래프에는 분류 결과(엣지)만 저장됩니다. 임계값 비교 연산자는 아직 DSL에 없으므로, SQL의 `HAVING` 으로 조건을 만족하는 행만 반환하게 하거나 `if_present` 로 존재성만 검사하세요.
+> 원본 수치는 RDB에 남고, 그래프에는 분류 결과(엣지)만 저장됩니다. 임계값 비교 연산자는 아직 DSL에 없으므로, SQL의 `HAVING`/`WHERE` 로 조건을 만족하는 행만 반환하게 하거나 `if_present` 로 존재성만 검사하세요.
 
-### 4. 메트릭 조회 및 삭제
+### 4. 뷰 조회 및 삭제
 
 ```bash
-data-oop list-metrics                       # 전체
-data-oop list-metrics --class-name Customer # 클래스 필터
-data-oop delete-metric --name revenue_last_30d
+data-oop list-views                       # 전체
+data-oop list-views --class-name Customer # 클래스 필터
+data-oop delete-view --name top_customers
 ```
 
-> 메트릭이 참조하는 커넥터는 `delete-connector` 가 차단합니다(`--detach` 로 메트릭까지 정리).
+> 뷰가 참조하는 커넥터는 `delete-connector` 가 차단합니다(`--detach` 로 뷰까지 정리).
+
+---
+
+## 5-C단계: ABox 읽기 전용 쿼리 (abox-query)
+
+ABox 노드를 임의 Cypher로 조회합니다. FalkorDB의 `GRAPH.RO_QUERY`(읽기 전용)로 실행되어 모든 쓰기(CREATE/MERGE/SET/DELETE)가 **DB 레벨에서 거부**됩니다. 결과는 RETURN 컬럼명을 키로 하는 행 dict 리스트로 나오고, 노드/엣지 값은 속성 맵으로 평탄화됩니다. `LIMIT` 이 없으면 자동으로 붙습니다(최대 500).
+
+```bash
+data-oop abox-query --cypher "MATCH (c:Customer) WHERE c.tier='gold' RETURN c.uuid, c" --limit 50
+# 출력: [{"c.uuid": "...", "c": {"uuid": "...", "tier": "gold", ...}}, ...]
+```
+
+> 메트릭 값은 그래프에 없습니다(RDB에 있음). 노드를 뽑은 뒤 필요한 집계는 `resolve-view` 로 따로 가져와 `--key-column` 으로 맞추세요. 라이브러리에서는 `from data_oop import abox_query, resolve_view, connect_and_abox_query, connect_and_resolve_view` 로 같은 동작을 직접 호출할 수 있습니다(외부 MCP 서버 등).
 
 ---
 
