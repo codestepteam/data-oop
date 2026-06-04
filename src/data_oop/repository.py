@@ -8,6 +8,7 @@ from .models import (
     ConstraintDef,
     EffectivePropertyDef,
     InterfaceDef,
+    MetricDef,
     PropertyBinding,
     PropertyDef,
     RelationshipDef,
@@ -300,3 +301,12 @@ class TBoxRepository(Protocol):
     def detach_source_binding_from_class(self, class_name: str) -> None: ...
 
     def list_source_bindings(self) -> list[SourceBinding]: ...
+
+    # Metric (class <- named parameterized RDB query)
+    def define_metric(self, metric: MetricDef, *, merge: bool = True) -> MetricDef: ...
+
+    def get_metric(self, name: str) -> MetricDef | None: ...
+
+    def list_metrics(self, class_name: str | None = None) -> list[MetricDef]: ...
+
+    def delete_metric(self, name: str) -> None: ...

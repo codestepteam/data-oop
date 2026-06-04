@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -136,65 +137,154 @@ def cmd_run_workflow(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _format_json(value: Any) -> str:
+    """Stable one-line JSON for inspect detail fields."""
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _print_metadata(metadata: dict[str, Any], *, indent: str = "    ") -> None:
+    if metadata:
+        print(f"{indent}metadata: {_format_json(metadata)}")
+
+
+def _print_effective_properties(props: list[Any], *, indent: str = "    ") -> None:
+    if not props:
+        return
+    print(f"{indent}Properties:")
+    for p in props:
+        req_str = "required" if p.binding.required else "optional"
+        uniq_str = ", unique" if p.binding.unique else ""
+        nullable_str = ", nullable" if p.binding.nullable else ", not-null"
+        default_str = f", default={p.binding.default!r}" if p.binding.default is not None else ""
+        print(
+            f"{indent}  * {p.property.name} ({p.property.datatype}, "
+            f"{req_str}{uniq_str}{nullable_str}{default_str}) "
+            f"from {p.source_kind}:{p.source_id} - {p.property.description or p.binding.description or ''}"
+        )
+        _print_metadata(p.property.metadata, indent=f"{indent}    ")
+        if p.binding.metadata:
+            print(f"{indent}    binding metadata: {_format_json(p.binding.metadata)}")
+
+
 def cmd_inspect(args: argparse.Namespace) -> None:
-    """Inspect and list TBox definition elements from FalkorDB."""
+    """Inspect and list every known TBox definition element from FalkorDB."""
     _, graph = get_db_connection(args)
     repo = FalkorTBoxRepository(graph)
 
     print(f"=== Inspecting TBox Graph: {graph.name} ===")
-    
+
     classes = repo.list_classes()
     print(f"\n[Classes] ({len(classes)})")
     for cls in classes:
         print(f"  - {cls.name} (label: {cls.label or 'None'}) - {cls.description or ''}")
-        props = repo.get_properties_of_class(cls.name)
-        if props:
-            print("    Properties:")
-            for p in props:
-                req_str = "required" if p.binding.required else "optional"
-                uniq_str = ", unique" if p.binding.unique else ""
-                print(f"      * {p.property.name} ({p.property.datatype}, {req_str}{uniq_str}) - {p.property.description or ''}")
+        _print_metadata(cls.metadata)
+        class_interfaces = repo.get_interfaces_of_class(cls.name)
+        if class_interfaces:
+            print("    Implements: " + ", ".join(iface.name for iface in class_interfaces))
+        _print_effective_properties(repo.get_properties_of_class(cls.name))
 
     interfaces = repo.list_interfaces()
-    if interfaces:
-        print(f"\n[Interfaces] ({len(interfaces)})")
-        for iface in interfaces:
-            print(f"  - {iface.name} - {iface.description or ''}")
+    print(f"\n[Interfaces] ({len(interfaces)})")
+    for iface in interfaces:
+        print(f"  - {iface.name} - {iface.description or ''}")
+        _print_metadata(iface.metadata)
+        _print_effective_properties(repo.get_properties_of_interface(iface.name))
+
+    properties = repo.list_properties()
+    print(f"\n[Properties] ({len(properties)})")
+    for prop in properties:
+        print(f"  - {prop.name} ({prop.datatype}) - {prop.description or ''}")
+        _print_metadata(prop.metadata)
 
     relationships = repo.list_relationships()
     print(f"\n[Relationships] ({len(relationships)})")
     for rel in relationships:
         req_str = "required" if rel.required else "optional"
         min_max = f"cardinality: {rel.min_count}..{rel.max_count or 'N'}"
-        print(f"  - {rel.id}: ({rel.from_class}) -[:{rel.name}]-> ({rel.to_class}) [{req_str}, {min_max}] - {rel.description or ''}")
+        print(
+            f"  - {rel.id}: ({rel.from_class}) -[:{rel.name}]-> ({rel.to_class}) "
+            f"[{req_str}, {min_max}] - {rel.description or ''}"
+        )
+        _print_metadata(rel.metadata)
+        _print_effective_properties(repo.get_properties_of_relationship(rel.id))
 
     constraints = repo.list_constraints()
-    if constraints:
-        print(f"\n[Constraints] ({len(constraints)})")
-        for const in constraints:
-            print(f"  - {const.id}: {const.kind} on {const.target_kind} '{const.target_id}' - {const.description or ''}")
+    print(f"\n[Constraints] ({len(constraints)})")
+    for const in constraints:
+        prop_names = ",".join(const.property_names) or "None"
+        print(
+            f"  - {const.id}: {const.kind} on {const.target_kind} '{const.target_id}' "
+            f"[severity={const.severity}, properties={prop_names}] - {const.description or ''}"
+        )
+        if const.expression:
+            print(f"    expression: {const.expression}")
+        _print_metadata(const.metadata)
+
+    connectors = repo.list_connectors()
+    print(f"\n[Connectors] ({len(connectors)})")
+    for connector in connectors:
+        print(
+            f"  - {connector.name} (kind={connector.kind}, dsn_ref={connector.dsn_ref or 'None'}) "
+            f"- {connector.description or ''}"
+        )
+        _print_metadata(connector.metadata)
+
+    source_bindings = repo.list_source_bindings()
+    print(f"\n[Source Bindings] ({len(source_bindings)})")
+    for binding in source_bindings:
+        keys = ",".join(binding.key_columns) or "None"
+        print(
+            f"  - {binding.class_name} <- {binding.connector_name} "
+            f"[keys={keys}, materialization={binding.materialization}, "
+            f"refresh_interval_hours={binding.refresh_interval_hours or 'None'}]"
+        )
+        if binding.column_map:
+            print(f"    column_map: {_format_json(binding.column_map)}")
+        if binding.links:
+            print(f"    links: {_format_json([asdict(link) for link in binding.links])}")
+        print(f"    sql: {binding.sql}")
+
+    metrics = repo.list_metrics()
+    print(f"\n[Metrics] ({len(metrics)})")
+    for metric in metrics:
+        print(
+            f"  - {metric.name} on {metric.class_name} <- {metric.connector_name} "
+            f"[result_kind={metric.result_kind}, value_column={metric.value_column}, "
+            f"ttl_seconds={metric.ttl_seconds or 'live'}] - {metric.description or ''}"
+        )
+        if metric.param_map:
+            print(f"    param_map: {_format_json(metric.param_map)}")
+        print(f"    sql: {metric.sql}")
 
     # Inspect workflows
     try:
-        res = graph.query("MATCH (w:WorkflowDefinition) RETURN w.uuid, w.name, w.description")
+        res = graph.query(
+            "MATCH (w:WorkflowDefinition) "
+            "RETURN w.uuid, w.name, w.description, w.steps_json, w.parameters_json"
+        )
         rows = getattr(res, "result_set", []) or []
         print(f"\n[Workflow Definitions] ({len(rows)})")
         for row in rows:
             print(f"  - Name: {row[1]} (uuid: {row[0]}) - {row[2] or ''}")
+            if len(row) > 4 and row[4]:
+                print(f"    parameters_json: {row[4]}")
+            if len(row) > 3 and row[3]:
+                print(f"    steps_json: {row[3]}")
     except Exception:
         pass
 
     # Inspect triggers
     triggers = repo.list_triggers()
-    if triggers:
-        print(f"\n[Triggers] ({len(triggers)})")
-        for t in triggers:
-            state = "" if t.enabled else " [disabled]"
-            cond = f" if {t.condition}" if t.condition else ""
-            print(
-                f"  - {t.name}: ({t.class_name}) on {t.event}{cond} -> "
-                f"workflow '{t.workflow_name}'{state}"
-            )
+    print(f"\n[Triggers] ({len(triggers)})")
+    for t in triggers:
+        state = "" if t.enabled else " [disabled]"
+        cond = f" if {t.condition}" if t.condition else ""
+        print(
+            f"  - {t.name}: ({t.class_name}) on {t.event}{cond} -> "
+            f"workflow '{t.workflow_name}' [order={t.order}]{state} - {t.description or ''}"
+        )
+        if t.parameter_map:
+            print(f"    parameter_map: {_format_json(t.parameter_map)}")
 
 
 def cmd_tbox_create_class(args: argparse.Namespace) -> None:
@@ -848,7 +938,7 @@ def main() -> None:
     parser_workflow.set_defaults(func=cmd_run_workflow)
 
     # inspect
-    parser_inspect = subparsers.add_parser("inspect", help="List all defined Classes, Properties, Relationships and Workflows")
+    parser_inspect = subparsers.add_parser("inspect", help="List all TBox definitions, metrics, bindings, triggers and workflows")
     parser_inspect.set_defaults(func=cmd_inspect)
 
     # tbox-create-class

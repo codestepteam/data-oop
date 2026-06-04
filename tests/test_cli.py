@@ -7,6 +7,20 @@ from uuid import UUID
 import pytest
 
 from data_oop.cli import main
+from data_oop.models import (
+    ClassDef,
+    ConnectorDef,
+    ConstraintDef,
+    EffectivePropertyDef,
+    InterfaceDef,
+    MetricDef,
+    PropertyBinding,
+    PropertyDef,
+    RelationshipDef,
+    SourceBinding,
+    SourceLink,
+    TriggerDef,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -480,3 +494,103 @@ def test_cli_db_restore(mock_restore) -> None:
         username=None,
         password=None
     )
+
+
+@patch("data_oop.cli.FalkorTBoxRepository")
+@patch("data_oop.cli.get_db_connection")
+def test_cli_inspect_lists_full_tbox_content(mock_get_db, mock_repo_class, capsys) -> None:
+    graph = MagicMock()
+    graph.name = "data_oop"
+    workflow_result = MagicMock()
+    workflow_result.result_set = [
+        ["wf-1", "score_workflow", "Score customers", '[{"step_id":"fetch"}]', "[]"]
+    ]
+    graph.query.return_value = workflow_result
+    mock_get_db.return_value = (None, graph)
+
+    repo = MagicMock()
+    mock_repo_class.return_value = repo
+    prop = PropertyDef(name="customer_id", datatype="string", description="Customer id")
+    binding = PropertyBinding(
+        owner_kind="class",
+        owner_id="Customer",
+        property_name="customer_id",
+        required=True,
+        unique=True,
+        nullable=False,
+    )
+    repo.list_classes.return_value = [ClassDef(name="Customer", label="Customer", description="Customer class")]
+    repo.get_interfaces_of_class.return_value = [InterfaceDef(name="Auditable")]
+    repo.get_properties_of_class.return_value = [
+        EffectivePropertyDef(property=prop, binding=binding, source_kind="class", source_id="Customer")
+    ]
+    repo.list_interfaces.return_value = [InterfaceDef(name="Auditable", description="Audit fields")]
+    repo.get_properties_of_interface.return_value = []
+    repo.list_properties.return_value = [prop]
+    repo.list_relationships.return_value = [
+        RelationshipDef(
+            id="rel_customer_order",
+            name="PLACED",
+            from_class="Customer",
+            to_class="Order",
+            description="Customer order",
+        )
+    ]
+    repo.get_properties_of_relationship.return_value = []
+    repo.list_constraints.return_value = [
+        ConstraintDef(id="customer_unique", kind="unique", target_kind="class", target_id="Customer")
+    ]
+    repo.list_connectors.return_value = [
+        ConnectorDef(name="warehouse", kind="postgres", dsn_ref="WAREHOUSE_DSN")
+    ]
+    repo.list_source_bindings.return_value = [
+        SourceBinding(
+            class_name="Customer",
+            connector_name="warehouse",
+            sql="SELECT customer_id FROM customers",
+            key_columns=("customer_id",),
+            column_map={"customer_id": "customer_id"},
+            links=(
+                SourceLink(
+                    relationship_name="PLACED",
+                    to_class="Order",
+                    local_key="customer_id",
+                    target_property="customer_id",
+                ),
+            ),
+        )
+    ]
+    repo.list_metrics.return_value = [
+        MetricDef(
+            name="revenue_last_30d",
+            class_name="Customer",
+            connector_name="warehouse",
+            sql="SELECT sum(amount) AS value FROM orders WHERE customer_id = :cid",
+            param_map={"cid": "{customer_id}"},
+            ttl_seconds=3600,
+            description="Recent revenue",
+        )
+    ]
+    repo.list_triggers.return_value = [
+        TriggerDef(
+            name="score_on_update",
+            class_name="Customer",
+            event="update",
+            workflow_name="score_workflow",
+            parameter_map={"customer_id": "{uuid}"},
+        )
+    ]
+
+    with patch.object(sys, "argv", ["data-oop", "inspect"]):
+        main()
+
+    out = capsys.readouterr().out
+    assert "[Properties] (1)" in out
+    assert "[Connectors] (1)" in out
+    assert "[Source Bindings] (1)" in out
+    assert "SELECT customer_id FROM customers" in out
+    assert "[Metrics] (1)" in out
+    assert "revenue_last_30d" in out
+    assert 'param_map: {"cid": "{customer_id}"}' in out
+    assert "steps_json" in out
+    assert 'parameter_map: {"customer_id": "{uuid}"}' in out
