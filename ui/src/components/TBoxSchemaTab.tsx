@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
-import { RefreshCw, Plus, Activity, Database, Cable, Link2, Zap, Trash2, AlertTriangle } from "lucide-react";
+import { RefreshCw, Plus, Activity, Database, Cable, Link2, Zap, Trash2, AlertTriangle, Gauge } from "lucide-react";
 import type {
   TBoxClass,
   TBoxInterface,
   TBoxRelationship,
   ConnectorDef,
   SourceBinding,
+  MetricDef,
   TriggerDef,
   TriggerGraphReport,
 } from "../types";
@@ -20,6 +21,7 @@ interface TBoxSchemaTabProps {
     constraints: any[];
     connectors?: ConnectorDef[];
     source_bindings?: SourceBinding[];
+    metrics?: MetricDef[];
     triggers?: TriggerDef[];
   };
   loading: boolean;
@@ -732,6 +734,54 @@ export function TBoxSchemaTab({
             </div>
           )}
         </div>
+      </div>
+
+      {/* On-demand Metrics (value stays in RDB; graph stores only the query spec) */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <h3 className="font-bold text-slate-950 text-base mb-4 flex items-center space-x-2">
+          <Gauge className="h-5 w-5 text-violet-500" />
+          <span>On-demand Metrics ({(tbox.metrics ?? []).length})</span>
+        </h3>
+        {(tbox.metrics ?? []).length === 0 ? (
+          <p className="text-sm text-slate-400 italic">No metrics defined.</p>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {(tbox.metrics ?? []).map((m) => (
+              <div key={m.name} className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm font-bold text-slate-900">{m.name}</span>
+                    <span className="text-xs text-slate-400">on</span>
+                    <span className="text-xs font-mono text-slate-600">{m.class_name}</span>
+                  </div>
+                  <span className="text-[10px] font-mono bg-violet-100 text-violet-800 px-2 py-0.5 rounded-md border border-violet-200">
+                    {m.result_kind}
+                  </span>
+                </div>
+                <div className="flex items-center space-x-2 mt-1">
+                  <span className="text-xs text-slate-400">←</span>
+                  <span className="text-xs font-mono bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md border border-amber-200">
+                    {m.connector_name}
+                  </span>
+                  <span className="text-[10px] text-slate-500">
+                    {m.ttl_seconds != null ? `cache ${m.ttl_seconds}s` : "live"}
+                  </span>
+                </div>
+                <p className="text-[11px] font-mono text-slate-500 mt-2 line-clamp-2 break-all">{m.sql}</p>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {Object.entries(m.param_map).map(([k, v]) => (
+                    <span key={k} className="text-[10px] font-mono bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">
+                      {k}={v}
+                    </span>
+                  ))}
+                </div>
+                {m.description && (
+                  <p className="text-xs text-slate-400 mt-1 italic">{m.description}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Triggers (class-level callbacks: on create/update -> run workflow) */}

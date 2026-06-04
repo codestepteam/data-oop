@@ -184,6 +184,7 @@ def get_tbox():
         constraints = repo.list_constraints()
         connectors = repo.list_connectors()
         source_bindings = repo.list_source_bindings()
+        metrics = repo.list_metrics()
         triggers = repo.list_triggers()
         
         # Build enriched classes with effective properties
@@ -306,6 +307,20 @@ def get_tbox():
                     ],
                 }
                 for b in source_bindings
+            ],
+            "metrics": [
+                {
+                    "name": m.name,
+                    "class_name": m.class_name,
+                    "connector_name": m.connector_name,
+                    "sql": m.sql,
+                    "param_map": m.param_map,
+                    "result_kind": m.result_kind,
+                    "value_column": m.value_column,
+                    "ttl_seconds": m.ttl_seconds,
+                    "description": m.description,
+                }
+                for m in metrics
             ],
             "triggers": [
                 {

@@ -62,6 +62,18 @@ export interface SourceBinding {
   links: SourceLink[];
 }
 
+export interface MetricDef {
+  name: string;
+  class_name: string;
+  connector_name: string;
+  sql: string;
+  param_map: Record<string, string>;
+  result_kind: "scalar" | "row" | "rows";
+  value_column: string;
+  ttl_seconds: number | null;
+  description: string | null;
+}
+
 export interface TriggerDef {
   class_name: string;
   name: string;
@@ -84,7 +96,7 @@ export interface TriggerGraphReport {
 
 export interface WorkflowStep {
   step_id: string;
-  action: "create_node" | "create_relationship" | "run_workflow";
+  action: "create_node" | "create_relationship" | "run_workflow" | "fetch_metric";
   class_name?: string;
   properties?: Record<string, any>;
   uuid?: string;
@@ -97,6 +109,7 @@ export interface WorkflowStep {
   loop_over?: string;
   loop_var?: string;
   workflow_name?: string;
+  metric_name?: string;
   parameters?: Record<string, any>;
 }
 
