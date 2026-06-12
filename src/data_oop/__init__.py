@@ -26,6 +26,7 @@ See ``docs/USAGE.md`` for worked examples.
 """
 
 from data_oop.exceptions import (
+    ABoxValidationError,
     TBoxAlreadyExistsError,
     TBoxConflictError,
     TBoxError,
@@ -43,6 +44,7 @@ from data_oop.falkor.repository import FalkorTBoxRepository
 from data_oop.falkor.abox import (
     ABoxNodeResult,
     ABoxRelationshipResult,
+    apply_subclass_labels,
     connect_and_upsert_abox_node,
     upsert_abox_node,
     upsert_abox_relationship,
@@ -97,6 +99,20 @@ from data_oop.schema.models import (
     ViewDef,
     ViewParam,
 )
+from data_oop.schema.declarative import (
+    ApplyResult,
+    SchemaPlan,
+    SchemaSpec,
+    apply_schema,
+    load_schema_file,
+    parse_schema_spec,
+    plan_schema,
+)
+from data_oop.schema.export import (
+    export_jsonld_context,
+    export_jsonld_context_str,
+    export_owl_turtle,
+)
 from data_oop.schema.repository import TBoxRepository
 from data_oop.schema.validator import SUPPORTED_DATATYPES, TBoxValidator
 
@@ -116,6 +132,8 @@ _API_GROUPS = (
     ("schema.repository", "Schema repository (protocol)"),
     ("memory", "Schema repository (in-memory)"),
     ("schema.dsl", "DSL builders"),
+    ("schema.declarative", "Declarative schema file (plan/apply)"),
+    ("schema.export", "Ontology export (OWL / JSON-LD)"),
     ("schema.validator", "TBox validator"),
     ("schema.models", "Data models (dataclasses)"),
     ("exceptions", "Exceptions"),
@@ -212,6 +230,7 @@ __all__ = [
     "TBoxRepository",
     "FalkorTBoxRepository",
     "TBoxValidationError",
+    "ABoxValidationError",
     "TBoxValidator",
     "ValidationIssue",
     "ValidationReport",
@@ -225,6 +244,7 @@ __all__ = [
     "store_latest_validation_report",
     "upsert_abox_node",
     "upsert_abox_relationship",
+    "apply_subclass_labels",
     "clear_abox_nodes",
     "connect_and_clear_abox_nodes",
     "delete_abox_element",
@@ -240,5 +260,15 @@ __all__ = [
     "dispatch_triggers",
     "dump_graph_to_file",
     "restore_graph_from_file",
+    "SchemaSpec",
+    "SchemaPlan",
+    "ApplyResult",
+    "load_schema_file",
+    "parse_schema_spec",
+    "plan_schema",
+    "apply_schema",
+    "export_owl_turtle",
+    "export_jsonld_context",
+    "export_jsonld_context_str",
     "describe_api",
 ]

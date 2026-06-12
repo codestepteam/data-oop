@@ -208,3 +208,31 @@ def test_resync_rebuilds_links(graph):
         "MATCH (i:Inventory)-[:OF_PRODUCT]->(p:Product) RETURN i.sku, p.product_id"
     ).result_set
     assert edges == [["A", 2]]
+
+
+def test_node_uuid_is_deterministic_for_key_columns() -> None:
+    from data_oop.rdb.sync import _node_uuid
+    from data_oop.schema.models import SourceBinding
+
+    binding = SourceBinding(
+        class_name="CustomerSegment",
+        connector_name="warehouse",
+        sql="SELECT ...",
+        key_columns=("tier", "region"),
+    )
+    row = {"tier": "gold", "region": "kr", "revenue": 100}
+    again = {"tier": "gold", "region": "kr", "revenue": 999}
+    other = {"tier": "silver", "region": "kr", "revenue": 100}
+
+    assert _node_uuid(binding, "warehouse", row) == _node_uuid(binding, "warehouse", again)
+    assert _node_uuid(binding, "warehouse", row) != _node_uuid(binding, "warehouse", other)
+    assert _node_uuid(binding, "other_conn", row) != _node_uuid(binding, "warehouse", row)
+
+
+def test_node_uuid_without_key_columns_is_random() -> None:
+    from data_oop.rdb.sync import _node_uuid
+    from data_oop.schema.models import SourceBinding
+
+    binding = SourceBinding(class_name="X", connector_name="c", sql="SELECT 1")
+    row = {"a": 1}
+    assert _node_uuid(binding, "c", row) != _node_uuid(binding, "c", row)

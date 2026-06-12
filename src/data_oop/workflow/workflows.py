@@ -9,7 +9,12 @@ from typing import Any
 from urllib.parse import urlparse
 
 from data_oop.falkor.graph import FalkorGraph
-from data_oop.falkor.abox import ABoxNodeResult, upsert_abox_node, upsert_abox_relationship
+from data_oop.falkor.abox import (
+    ABoxNodeResult,
+    _safe_identifier,
+    upsert_abox_node,
+    upsert_abox_relationship,
+)
 from data_oop.schema.models import WorkflowDef, WorkflowStepDef, WorkflowParameterDef
 
 
@@ -651,8 +656,6 @@ def run_workflow(
                     from_uuid = interpolated.get("from_uuid")
                     relationship_name = interpolated.get("relationship_name")
                     to_class = interpolated.get("to_class")
-                    to_uuid = interpolated_step.get("to_uuid") if (to_uuid := interpolated.get("to_uuid")) is None else to_uuid
-                    # Ensure we get interpolated fields correctly
                     to_uuid_val = interpolated.get("to_uuid")
                     properties = interpolated.get("properties", {})
 
@@ -814,7 +817,7 @@ def _execute_rollback_item(graph: FalkorGraph, item: dict[str, Any]) -> None:
     elif t == "delete_relationship":
         from_uuid = item.get("from_uuid")
         to_uuid = item.get("to_uuid")
-        rel_name = item.get("relationship_name")
+        rel_name = _safe_identifier(item.get("relationship_name"), "relationship")
         graph.query(
             f"MATCH (a {{uuid: $from_uuid}})-[r:{rel_name}]->(b {{uuid: $to_uuid}}) DELETE r",
             {"from_uuid": from_uuid, "to_uuid": to_uuid}
@@ -842,7 +845,7 @@ def _rollback_single_step_result(graph: FalkorGraph, step_res: Any) -> None:
         return
     
     if "relationship_name" in step_res and "from_uuid" in step_res and "to_uuid" in step_res:
-        rel_name = step_res["relationship_name"]
+        rel_name = _safe_identifier(step_res["relationship_name"], "relationship")
         from_uuid = step_res["from_uuid"]
         to_uuid = step_res["to_uuid"]
         graph.query(

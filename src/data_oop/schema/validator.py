@@ -5,7 +5,6 @@ from typing import Any
 
 from data_oop.exceptions import TBoxNotFoundError
 from data_oop.schema.models import (
-    ClassDef,
     ConstraintDef,
     EffectiveClassSchema,
     EffectivePropertyDef,

@@ -3,9 +3,11 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from data_oop.exceptions import TBoxAlreadyExistsError, TBoxConflictError, TBoxNotFoundError
+from data_oop.schema.effective import merge_effective_properties
 from data_oop.schema.models import (
     ClassDef,
     ConnectorDef,
+    ConnectorKind,
     ConstraintDef,
     EffectivePropertyDef,
     InterfaceDef,
@@ -16,6 +18,7 @@ from data_oop.schema.models import (
     SourceBinding,
     SourceLink,
     TargetKind,
+    ViewDef,
 )
 
 
@@ -47,9 +50,11 @@ class InMemoryTBoxRepository:
         self._relationships: dict[str, RelationshipDef] = {}
         self._constraints: dict[str, ConstraintDef] = {}
         self._implements: set[tuple[str, str]] = set()
+        self._subclass_of: set[tuple[str, str]] = set()  # (child, parent)
         self._property_bindings: dict[tuple[OwnerKind, str, str], PropertyBinding] = {}
         self._connectors: dict[str, ConnectorDef] = {}
         self._source_bindings: dict[str, SourceBinding] = {}
+        self._views: dict[str, ViewDef] = {}
 
     # ------------------------------------------------------------------
     # helpers
@@ -221,6 +226,7 @@ class InMemoryTBoxRepository:
         self._require_class(name)
         references = []
         references.extend(edge for edge in self._implements if edge[0] == name)
+        references.extend(edge for edge in self._subclass_of if name in edge)
         references.extend(self._bindings_for_owner("class", name))
         references.extend(self._constraints_for_target("class", name))
         references.extend(
@@ -232,6 +238,7 @@ class InMemoryTBoxRepository:
             raise TBoxConflictError(f"ClassDef has references: {name}")
 
         self._implements = {edge for edge in self._implements if edge[0] != name}
+        self._subclass_of = {edge for edge in self._subclass_of if name not in edge}
         self._property_bindings = {
             key: value
             for key, value in self._property_bindings.items()
@@ -400,6 +407,54 @@ class InMemoryTBoxRepository:
             ],
             key=lambda value: value.name,
         )
+
+    # ------------------------------------------------------------------
+    # Subclass hierarchy (SUBCLASS_OF)
+    # ------------------------------------------------------------------
+    def set_subclass_of(self, *, class_name: str, parent_name: str) -> None:
+        self._require_class(class_name)
+        self._require_class(parent_name)
+        if class_name == parent_name:
+            raise TBoxConflictError(f"Class cannot subclass itself: {class_name}")
+        if any(c.name == class_name for c in self.get_superclasses(parent_name)):
+            raise TBoxConflictError(
+                f"Subclass cycle: {parent_name} already inherits from {class_name}"
+            )
+        self._subclass_of.add((class_name, parent_name))
+
+    def remove_subclass_of(self, *, class_name: str, parent_name: str) -> None:
+        self._require_class(class_name)
+        self._require_class(parent_name)
+        self._subclass_of.discard((class_name, parent_name))
+
+    def get_superclasses(self, class_name: str, *, transitive: bool = True) -> list[ClassDef]:
+        self._require_class(class_name)
+        parents = {p for c, p in self._subclass_of if c == class_name}
+        if transitive:
+            frontier = list(parents)
+            while frontier:
+                current = frontier.pop()
+                for child, parent in self._subclass_of:
+                    if child == current and parent not in parents:
+                        parents.add(parent)
+                        frontier.append(parent)
+        return sorted((self._classes[p] for p in parents), key=lambda value: value.name)
+
+    def get_subclasses(self, class_name: str, *, transitive: bool = True) -> list[ClassDef]:
+        self._require_class(class_name)
+        children = {c for c, p in self._subclass_of if p == class_name}
+        if transitive:
+            frontier = list(children)
+            while frontier:
+                current = frontier.pop()
+                for child, parent in self._subclass_of:
+                    if parent == current and child not in children:
+                        children.add(child)
+                        frontier.append(child)
+        return sorted((self._classes[c] for c in children), key=lambda value: value.name)
+
+    def is_subclass_of(self, *, class_name: str, parent_name: str) -> bool:
+        return any(c.name == parent_name for c in self.get_superclasses(class_name))
 
     # ------------------------------------------------------------------
     # Property
@@ -643,77 +698,37 @@ class InMemoryTBoxRepository:
     ) -> list[EffectivePropertyDef]:
         self._require_class(class_name)
         sources: list[EffectivePropertyDef] = []
-        if include_interfaces:
-            for interface_def in self.get_interfaces_of_class(class_name):
-                for binding in sorted(
-                    self._bindings_for_owner("interface", interface_def.name),
-                    key=lambda value: value.property_name,
-                ):
-                    sources.append(
-                        self._effective_property_from_binding(
-                            binding,
-                            source_kind="interface",
-                            source_id=interface_def.name,
+        # The class itself first, then SUBCLASS_OF ancestors, so the merge's
+        # first-non-null default and source attribution favor the class's own
+        # bindings over inherited ones.
+        lineage = [c.name for c in self.get_superclasses(class_name)]
+        for owner_name in (class_name, *lineage):
+            if include_interfaces:
+                for interface_def in self.get_interfaces_of_class(owner_name):
+                    for binding in sorted(
+                        self._bindings_for_owner("interface", interface_def.name),
+                        key=lambda value: value.property_name,
+                    ):
+                        sources.append(
+                            self._effective_property_from_binding(
+                                binding,
+                                source_kind="interface",
+                                source_id=interface_def.name,
+                            )
                         )
-                    )
 
-        for binding in sorted(
-            self._bindings_for_owner("class", class_name),
-            key=lambda value: value.property_name,
-        ):
-            sources.append(
-                self._effective_property_from_binding(
-                    binding, source_kind="class", source_id=class_name
+            for binding in sorted(
+                self._bindings_for_owner("class", owner_name),
+                key=lambda value: value.property_name,
+            ):
+                sources.append(
+                    self._effective_property_from_binding(
+                        binding, source_kind="class", source_id=owner_name
+                    )
                 )
-            )
         return sources
 
-    @staticmethod
-    def _merge_effective_property_sources(
-        owner_kind: OwnerKind,
-        owner_id: str,
-        sources: list[EffectivePropertyDef],
-    ) -> list[EffectivePropertyDef]:
-        grouped: dict[str, list[EffectivePropertyDef]] = {}
-        for source in sources:
-            grouped.setdefault(source.property.name, []).append(source)
-
-        merged: list[EffectivePropertyDef] = []
-        for property_name in sorted(grouped):
-            values = grouped[property_name]
-            if len(values) == 1:
-                merged.append(values[0])
-                continue
-
-            defaults = [value.binding.default for value in values if value.binding.default is not None]
-            default = defaults[0] if defaults else None
-            metadata: dict[str, Any] = {}
-            for value in values:
-                metadata.update(value.binding.metadata)
-
-            binding = PropertyBinding(
-                owner_kind=owner_kind,
-                owner_id=owner_id,
-                property_name=property_name,
-                required=any(value.binding.required for value in values),
-                unique=any(value.binding.unique for value in values),
-                nullable=all(value.binding.nullable for value in values),
-                default=default,
-                metadata=metadata,
-            )
-            direct_source = next(
-                (value for value in values if value.source_kind == owner_kind), None
-            )
-            source = direct_source or values[0]
-            merged.append(
-                EffectivePropertyDef(
-                    property=source.property,
-                    binding=binding,
-                    source_kind=source.source_kind,
-                    source_id=source.source_id,
-                )
-            )
-        return merged
+    _merge_effective_property_sources = staticmethod(merge_effective_properties)
 
     def get_properties_of_class(
         self, class_name: str, *, include_interfaces: bool = True
@@ -1041,7 +1056,7 @@ class InMemoryTBoxRepository:
         self,
         name: str,
         *,
-        kind: Literal["mysql", "postgres"] = "postgres",
+        kind: ConnectorKind = "postgres",
         dsn_ref: str = "",
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -1137,3 +1152,35 @@ class InMemoryTBoxRepository:
 
     def list_source_bindings(self) -> list[SourceBinding]:
         return sorted(self._source_bindings.values(), key=lambda value: value.class_name)
+
+    # ------------------------------------------------------------------
+    # View (class <- named parameterized RDB query, resolved on demand to a table)
+    # ------------------------------------------------------------------
+    def _require_view(self, name: str) -> ViewDef:
+        if name not in self._views:
+            raise TBoxNotFoundError(f"ViewDef not found: {name}")
+        return self._views[name]
+
+    def define_view(self, view: ViewDef, *, merge: bool = True) -> ViewDef:
+        """Attach (or update) a named parameterized query to a class. Mirrors the live
+        repository: the referenced class and connector must already exist, and a
+        duplicate name raises unless ``merge`` is set."""
+        self._require_class(view.class_name)
+        self._require_connector(view.connector_name)
+        if not merge and view.name in self._views:
+            raise TBoxAlreadyExistsError(f"ViewDef already exists: {view.name}")
+        self._views[view.name] = view
+        return view
+
+    def get_view(self, name: str) -> ViewDef | None:
+        return self._views.get(name)
+
+    def list_views(self, class_name: str | None = None) -> list[ViewDef]:
+        views = self._views.values()
+        if class_name is not None:
+            views = [v for v in views if v.class_name == class_name]
+        return sorted(views, key=lambda value: value.name)
+
+    def delete_view(self, name: str) -> None:
+        self._require_view(name)
+        del self._views[name]

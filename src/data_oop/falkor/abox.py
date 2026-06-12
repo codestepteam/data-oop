@@ -35,12 +35,20 @@ def upsert_abox_node(
     uuid: str,
     properties: dict[str, Any] | None = None,
     fire_triggers: bool = True,
+    validate: bool = True,
     _depth: int = 0,
 ) -> ABoxNodeResult:
     """Create or update one ABox node for a ClassDef.
 
     The function validates that a matching TBox ClassDef exists, then MERGEs an
     ABox node with the domain class label only. It does not add an :ABox label.
+
+    With ``validate=True`` (default) the write is checked against the effective TBox
+    schema before anything is written: required properties must be present on create,
+    provided values must match their declared datatype and unique flags, and
+    required/regex/range constraints are enforced on provided values. Violations raise
+    :class:`ABoxValidationError`. Bulk paths (e.g. source sync) pass ``validate=False``
+    and rely on batch validation instead.
 
     When ``fire_triggers`` is true and the recursion depth is within
     ``MAX_TRIGGER_DEPTH``, any class-level triggers registered for the resulting
@@ -58,17 +66,34 @@ def upsert_abox_node(
 
     dispatch = fire_triggers and _depth < MAX_TRIGGER_DEPTH
     # Detect create-vs-update before the MERGE so we know which event to fire.
-    # Only pay for the extra MATCH when triggers may actually run.
+    # Only pay for the extra MATCH when triggers or validation may actually run.
     existed = False
-    if dispatch:
+    if dispatch or validate:
         rows = graph.query(
             f"MATCH (n:{label} {{uuid: $uuid}}) RETURN count(n)", {"uuid": uuid}
         ).result_set
         existed = bool(rows and rows[0] and rows[0][0])
 
+    if validate:
+        _validate_node_write(
+            graph,
+            class_name=class_name,
+            label=label,
+            uuid=uuid,
+            props=props,
+            existed=existed,
+        )
+
     set_clause, params = _set_clause("n", props)
+    # Instances carry every SUBCLASS_OF ancestor label (e.g. :Person:Agent), so a
+    # query over the parent class matches subclass instances without inference.
+    ancestor_labels = "".join(
+        f":{_safe_identifier(name, 'class')}"
+        for name in _ancestor_class_names(graph, class_name)
+    )
+    label_clause = f"\n        SET n{ancestor_labels}" if ancestor_labels else ""
     query = f"""
-        MERGE (n:{label} {{uuid: $uuid}})
+        MERGE (n:{label} {{uuid: $uuid}}){label_clause}
         SET n.uuid = $uuid{set_clause}
         RETURN n.uuid
     """
@@ -122,19 +147,40 @@ def upsert_abox_relationship(
     to_class: str,
     to_uuid: str,
     properties: dict[str, Any] | None = None,
+    validate: bool = True,
 ) -> ABoxRelationshipResult:
-    """Create or update an ABox relationship between two domain nodes."""
+    """Create or update an ABox relationship between two domain nodes.
+
+    With ``validate=True`` (default) the relationship's ``max_count`` cardinality is
+    enforced before writing: when adding this edge would exceed the declared maximum
+    outgoing count for the source node, :class:`ABoxValidationError` is raised.
+    """
 
     from_label = _safe_identifier(from_class, "from_class")
     to_label = _safe_identifier(to_class, "to_class")
     rel_type = _safe_identifier(relationship_name, "relationship")
     props = dict(properties or {})
+    # The relationship uuid is derived (from_uuid:rel:to_uuid) and set via coalesce below.
+    # Drop any caller-supplied "uuid" so _set_clause can't silently override the stable one.
+    props.pop("uuid", None)
     _require_relationship_def(
         graph,
         from_class=from_class,
         relationship_name=relationship_name,
         to_class=to_class,
     )
+    if validate:
+        _validate_relationship_write(
+            graph,
+            from_class=from_class,
+            from_label=from_label,
+            from_uuid=from_uuid,
+            relationship_name=relationship_name,
+            rel_type=rel_type,
+            to_class=to_class,
+            to_label=to_label,
+            to_uuid=to_uuid,
+        )
     set_clause, params = _set_clause("r", props)
     graph.query(
         f"""
@@ -161,6 +207,155 @@ def upsert_abox_relationship(
     )
 
 
+# --- write-time validation -------------------------------------------------
+#
+# Checks an upsert against the effective TBox schema BEFORE writing, so violations
+# fail loudly at the call site instead of lingering until the next batch validation
+# run. Only error-severity constraints hard-fail a write; warning/info constraints
+# stay batch-only. Helpers from falkor.validation are imported lazily to keep this
+# module importable without pulling the whole validation machinery at import time.
+
+
+def _validate_node_write(
+    graph: FalkorGraph,
+    *,
+    class_name: str,
+    label: str,
+    uuid: str,
+    props: dict[str, Any],
+    existed: bool,
+) -> None:
+    from data_oop.exceptions import ABoxValidationError
+    from data_oop.falkor.validation import (
+        _compile_range,
+        _compile_regex,
+        _constraint_properties,
+        _load_constraints_for_class,
+        _load_effective_property_bindings,
+        _validate_value_datatype,
+    )
+
+    errors: list[str] = []
+    for binding in _load_effective_property_bindings(graph, class_name):
+        provided = binding.name in props
+        value = props.get(binding.name)
+        if binding.required:
+            if not existed and value is None:
+                errors.append(f"{class_name}.{binding.name} is required")
+            elif existed and provided and value is None:
+                errors.append(
+                    f"{class_name}.{binding.name} is required and cannot be set to null"
+                )
+        if not provided or value is None:
+            continue
+        if binding.datatype not in ("unknown", "any") and not _validate_value_datatype(
+            value, binding.datatype
+        ):
+            errors.append(
+                f"{class_name}.{binding.name} must be of type {binding.datatype}, "
+                f"got: {value!r}"
+            )
+        if binding.unique:
+            prop = _safe_identifier(binding.name, "property")
+            rows = graph.query(
+                f"""
+                MATCH (n:{label})
+                WHERE n.{prop} = $value AND n.uuid <> $uuid
+                RETURN count(n)
+                """,
+                {"value": value, "uuid": uuid},
+            ).result_set
+            if rows and rows[0] and rows[0][0]:
+                errors.append(
+                    f"{class_name}.{binding.name} must be unique; "
+                    f"value {value!r} already exists"
+                )
+
+    for constraint in _load_constraints_for_class(graph, class_name):
+        if constraint.severity != "error":
+            continue
+        constraint_props = _constraint_properties(constraint)
+        if constraint.kind == "required":
+            if existed:
+                continue
+            for prop_name in constraint_props:
+                if props.get(prop_name) is None:
+                    errors.append(
+                        f"{class_name}.{prop_name} is required by constraint "
+                        f"{constraint.id}"
+                    )
+        elif constraint.kind in ("regex", "range"):
+            predicate = (
+                _compile_regex(constraint)
+                if constraint.kind == "regex"
+                else _compile_range(constraint)
+            )
+            if predicate is None:
+                continue
+            for prop_name in constraint_props:
+                value = props.get(prop_name)
+                if prop_name in props and value is not None and not predicate(value):
+                    errors.append(
+                        f"{class_name}.{prop_name} violates {constraint.kind} "
+                        f"constraint {constraint.id} ({constraint.expression!r}); "
+                        f"got: {value!r}"
+                    )
+
+    if errors:
+        raise ABoxValidationError(errors)
+
+
+def _validate_relationship_write(
+    graph: FalkorGraph,
+    *,
+    from_class: str,
+    from_label: str,
+    from_uuid: str,
+    relationship_name: str,
+    rel_type: str,
+    to_class: str,
+    to_label: str,
+    to_uuid: str,
+) -> None:
+    from data_oop.exceptions import ABoxValidationError
+
+    from_names = [from_class, *_ancestor_class_names(graph, from_class)]
+    to_names = [to_class, *_ancestor_class_names(graph, to_class)]
+    rows = graph.query(
+        """
+        MATCH (r:TBox:RelationshipDef {name: $relationship_name})-[f:FROM_CLASS]->(fc:TBox:ClassDef)
+        MATCH (r)-[:TO_CLASS]->(tc:TBox:ClassDef)
+        WHERE fc.name IN $from_names AND tc.name IN $to_names
+        RETURN f.maxCount
+        """,
+        {
+            "relationship_name": relationship_name,
+            "from_names": from_names,
+            "to_names": to_names,
+        },
+    ).result_set
+    max_count = rows[0][0] if rows and rows[0] else None
+    if max_count is None:
+        return
+    # Existing edge to the same target is an update, not an addition.
+    count_rows = graph.query(
+        f"""
+        MATCH (f:{from_label} {{uuid: $from_uuid}})-[r:{rel_type}]->(t:{to_label})
+        WHERE t.uuid <> $to_uuid
+        RETURN count(r)
+        """,
+        {"from_uuid": from_uuid, "to_uuid": to_uuid},
+    ).result_set
+    current = int(count_rows[0][0]) if count_rows and count_rows[0] else 0
+    if current + 1 > int(max_count):
+        raise ABoxValidationError(
+            [
+                f"{from_class} allows at most {max_count} {relationship_name} "
+                f"relationship(s) to {to_class}; node {from_uuid} already has {current}"
+            ]
+        )
+
+
 def _require_class_def(graph: FalkorGraph, class_name: str) -> None:
     if class_name == "WorkflowDefinition":
         return
@@ -172,6 +367,18 @@ def _require_class_def(graph: FalkorGraph, class_name: str) -> None:
         raise ValueError(f"ClassDef not found: {class_name}")
 
 
+def _ancestor_class_names(graph: FalkorGraph, class_name: str) -> list[str]:
+    """All transitive SUBCLASS_OF ancestors of ``class_name`` (empty when none)."""
+    rows = graph.query(
+        """
+        MATCH (:TBox:ClassDef {name: $class_name})-[:SUBCLASS_OF*1..]->(p:TBox:ClassDef)
+        RETURN DISTINCT p.name
+        """,
+        {"class_name": class_name},
+    ).result_set
+    return sorted(str(row[0]) for row in rows if row and row[0])
+
+
 def _require_relationship_def(
     graph: FalkorGraph,
     *,
@@ -179,19 +386,24 @@ def _require_relationship_def(
     relationship_name: str,
     to_class: str,
 ) -> None:
+    # A relationship defined on an ancestor class applies to subclass instances,
+    # so the endpoint match accepts the class itself or any SUBCLASS_OF ancestor.
+    from_names = [from_class, *_ancestor_class_names(graph, from_class)]
+    to_names = [to_class, *_ancestor_class_names(graph, to_class)]
     rows = graph.query(
         """
-        MATCH (r:TBox:RelationshipDef {name: $relationship_name})-[:FROM_CLASS]->(:TBox:ClassDef {name: $from_class})
-        MATCH (r)-[:TO_CLASS]->(:TBox:ClassDef {name: $to_class})
+        MATCH (r:TBox:RelationshipDef {name: $relationship_name})-[:FROM_CLASS]->(f:TBox:ClassDef)
+        MATCH (r)-[:TO_CLASS]->(t:TBox:ClassDef)
+        WHERE f.name IN $from_names AND t.name IN $to_names
         RETURN count(r)
         """,
         {
-            "from_class": from_class,
             "relationship_name": relationship_name,
-            "to_class": to_class,
+            "from_names": from_names,
+            "to_names": to_names,
         },
     ).result_set
-    if not rows or rows[0][0] != 1:
+    if not rows or not rows[0] or not rows[0][0]:
         raise ValueError(
             "RelationshipDef not found: "
             f"({from_class})-[:{relationship_name}]->({to_class})"
@@ -213,6 +425,25 @@ def _safe_identifier(value: str, kind: str) -> str:
     if not NAME_RE.match(value):
         raise ValueError(f"Unsafe {kind} identifier: {value}")
     return value
+
+
+def apply_subclass_labels(*, graph: FalkorGraph, class_name: str) -> int:
+    """Stamp every existing ABox instance of ``class_name`` with its current
+    SUBCLASS_OF ancestor labels.
+
+    New upserts get ancestor labels automatically; call this after changing the
+    class hierarchy so previously written instances match parent-class queries too.
+    Returns the number of instances updated (0 when the class has no ancestors).
+    """
+    label = _safe_identifier(class_name, "class")
+    ancestors = _ancestor_class_names(graph, class_name)
+    if not ancestors:
+        return 0
+    labels = "".join(f":{_safe_identifier(name, 'class')}" for name in ancestors)
+    rows = graph.query(
+        f"MATCH (n:{label}) SET n{labels} RETURN count(n)"
+    ).result_set
+    return int(rows[0][0]) if rows and rows[0] else 0
 
 
 def clear_abox_nodes(*, graph: FalkorGraph) -> int:

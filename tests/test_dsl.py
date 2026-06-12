@@ -1,4 +1,3 @@
-import pytest
 
 from data_oop import (
     InMemoryTBoxRepository,

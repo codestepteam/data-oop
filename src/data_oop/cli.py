@@ -42,12 +42,26 @@ def _read_sql_arg(value: str) -> str:
 
 
 def _get_db_env_values(args: argparse.Namespace) -> tuple[str, int, str, str | None, str | None]:
-    """Helper to retrieve FalkorDB connection params from environment or args."""
-    host = os.environ.get("FALKORDB_HOST", os.environ.get("FALKOR_HOST", args.host))
-    port = int(os.environ.get("FALKORDB_PORT", os.environ.get("FALKOR_PORT", str(args.port))))
-    graph_name = os.environ.get("FALKORDB_GRAPH", os.environ.get("FALKOR_GRAPH", args.graph))
-    username = os.environ.get("FALKORDB_USERNAME", os.environ.get("FALKOR_USERNAME", args.username))
-    password = os.environ.get("FALKORDB_PASSWORD", os.environ.get("FALKOR_PASSWORD", args.password))
+    """FalkorDB connection params: explicit CLI flag > environment > default.
+
+    The parser registers these options with ``default=None`` so an explicitly
+    passed flag is distinguishable from "not given" — an explicit ``--graph X``
+    must never be silently overridden by FALKOR_GRAPH in .env.
+    """
+
+    def pick(arg_value, *env_keys, default=None):
+        if arg_value is not None:
+            return arg_value
+        for key in env_keys:
+            if key in os.environ:
+                return os.environ[key]
+        return default
+
+    host = pick(args.host, "FALKORDB_HOST", "FALKOR_HOST", default="localhost")
+    port = int(pick(args.port, "FALKORDB_PORT", "FALKOR_PORT", default=6380))
+    graph_name = pick(args.graph, "FALKORDB_GRAPH", "FALKOR_GRAPH", default="data_oop")
+    username = pick(args.username, "FALKORDB_USERNAME", "FALKOR_USERNAME")
+    password = pick(args.password, "FALKORDB_PASSWORD", "FALKOR_PASSWORD")
     return host, port, graph_name, username, password
 
 
@@ -166,6 +180,54 @@ def _print_effective_properties(props: list[Any], *, indent: str = "    ") -> No
         _print_metadata(p.property.metadata, indent=f"{indent}    ")
         if p.binding.metadata:
             print(f"{indent}    binding metadata: {_format_json(p.binding.metadata)}")
+
+
+def cmd_tbox_plan(args: argparse.Namespace) -> None:
+    """Diff a declarative schema file against the live TBox without applying."""
+    from data_oop.schema.declarative import load_schema_file, plan_schema
+
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+    spec = load_schema_file(args.file)
+    plan = plan_schema(repo, spec, prune=args.prune, graph=graph)
+    print(plan.render())
+
+
+def cmd_tbox_apply(args: argparse.Namespace) -> None:
+    """Apply a declarative schema file to the live TBox (idempotent upsert)."""
+    from data_oop.schema.declarative import apply_schema, load_schema_file
+
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+    spec = load_schema_file(args.file)
+    result = apply_schema(
+        repo, spec, prune=args.prune, dry_run=args.dry_run, graph=graph
+    )
+    print(result.plan.render())
+    if result.applied:
+        print("Applied.")
+    else:
+        print("Dry run — nothing written.")
+    for error in result.errors:
+        print(f"ERROR: {error}")
+
+
+def cmd_tbox_export(args: argparse.Namespace) -> None:
+    """Export the TBox as OWL (Turtle) or a JSON-LD context."""
+    from data_oop.schema.export import export_jsonld_context_str, export_owl_turtle
+
+    _, graph = get_db_connection(args)
+    repo = FalkorTBoxRepository(graph)
+    if args.format == "owl":
+        output = export_owl_turtle(repo, base_iri=args.base_iri)
+    else:
+        output = export_jsonld_context_str(repo, base_iri=args.base_iri)
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as handle:
+            handle.write(output)
+        print(f"Wrote {args.format} export to {args.out}")
+    else:
+        print(output)
 
 
 def cmd_inspect(args: argparse.Namespace) -> None:
@@ -445,7 +507,7 @@ def cmd_abox_upsert_relationship(args: argparse.Namespace) -> None:
             sys.exit(1)
 
     print(f"Upserting ABox relationship ({args.from_class} {{{args.from_uuid}}}) -[:{args.name}]-> ({args.to_class} {{{args.to_uuid}}})...")
-    result = upsert_abox_relationship(
+    upsert_abox_relationship(
         graph=graph,
         from_class=args.from_class,
         from_uuid=args.from_uuid,
@@ -914,9 +976,11 @@ def main() -> None:
     )
     
     # Global database options
-    parser.add_argument("--host", default="localhost", help="FalkorDB host (default: localhost / env: FALKOR_HOST)")
-    parser.add_argument("--port", type=int, default=6380, help="FalkorDB port (default: 6380 / env: FALKOR_PORT)")
-    parser.add_argument("--graph", default="data_oop", help="FalkorDB graph name (default: data_oop / env: FALKOR_GRAPH)")
+    # default=None so _get_db_env_values can tell an explicit flag from "not given":
+    # explicit flag > environment > built-in default.
+    parser.add_argument("--host", default=None, help="FalkorDB host (default: localhost / env: FALKOR_HOST)")
+    parser.add_argument("--port", type=int, default=None, help="FalkorDB port (default: 6380 / env: FALKOR_PORT)")
+    parser.add_argument("--graph", default=None, help="FalkorDB graph name (default: data_oop / env: FALKOR_GRAPH)")
     parser.add_argument("--username", default=None, help="FalkorDB username (env: FALKOR_USERNAME)")
     parser.add_argument("--password", default=None, help="FalkorDB password (env: FALKOR_PASSWORD)")
 
@@ -943,6 +1007,45 @@ def main() -> None:
     # inspect
     parser_inspect = subparsers.add_parser("inspect", help="List all TBox definitions, views, bindings, triggers and workflows")
     parser_inspect.set_defaults(func=cmd_inspect)
+
+    # tbox-plan / tbox-apply (declarative schema file)
+    p_tbox_plan = subparsers.add_parser(
+        "tbox-plan", help="Diff a declarative schema file (YAML) against the live TBox"
+    )
+    p_tbox_plan.add_argument("file", help="Path to the schema YAML file")
+    p_tbox_plan.add_argument(
+        "--prune", action="store_true",
+        help="Also plan deletion of entities absent from the file",
+    )
+    p_tbox_plan.set_defaults(func=cmd_tbox_plan)
+
+    p_tbox_apply = subparsers.add_parser(
+        "tbox-apply", help="Apply a declarative schema file (YAML) to the live TBox"
+    )
+    p_tbox_apply.add_argument("file", help="Path to the schema YAML file")
+    p_tbox_apply.add_argument(
+        "--prune", action="store_true",
+        help="Delete entities absent from the file (DESTRUCTIVE)",
+    )
+    p_tbox_apply.add_argument(
+        "--dry-run", action="store_true", help="Print the plan without writing"
+    )
+    p_tbox_apply.set_defaults(func=cmd_tbox_apply)
+
+    # tbox-export
+    p_tbox_export = subparsers.add_parser(
+        "tbox-export", help="Export the TBox as OWL (Turtle) or a JSON-LD context"
+    )
+    p_tbox_export.add_argument(
+        "--format", choices=["owl", "jsonld"], default="owl",
+        help="Export format (default: owl)",
+    )
+    p_tbox_export.add_argument(
+        "--base-iri", default="http://example.org/data-oop#",
+        help="Base IRI for generated terms",
+    )
+    p_tbox_export.add_argument("--out", default=None, help="Write to file instead of stdout")
+    p_tbox_export.set_defaults(func=cmd_tbox_export)
 
     # tbox-create-class
     p_tbox_class = subparsers.add_parser("tbox-create-class", help="Create a ClassDef in TBox")

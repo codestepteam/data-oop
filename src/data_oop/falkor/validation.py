@@ -11,6 +11,10 @@ from data_oop.falkor.graph import FalkorGraph
 from data_oop.schema.models import ValidationIssue, ValidationReport
 from data_oop.schema.validator import NAME_RE
 
+# Per-check row cap. When a check returns this many rows the result may be truncated, so a
+# warning issue is emitted rather than silently dropping violations beyond the cap.
+CHECK_ROW_LIMIT = 1000
+
 
 @dataclass(frozen=True)
 class FalkorValidationResult:
@@ -44,6 +48,17 @@ class _RelationshipInfo:
     min_count: int
     max_count: int | None
     required: bool
+
+
+@dataclass(frozen=True)
+class _ConstraintInfo:
+    id: str
+    kind: str
+    target_kind: str
+    target_id: str
+    property_names: tuple[str, ...]
+    expression: str | None
+    severity: str
 
 
 # Validation history is intentionally not versioned.
@@ -99,9 +114,11 @@ def run_latest_falkor_abox_validation(
                     MATCH (n:{label})
                     WHERE n.{prop} IS NULL
                     RETURN n.uuid, ID(n)
-                    LIMIT 1000
+                    LIMIT {CHECK_ROW_LIMIT}
                     """,
                 )
+                if len(rows) >= CHECK_ROW_LIMIT:
+                    issues.append(_truncation_issue(class_info.name, f"required:{binding.name}"))
                 for row in rows:
                     instance_uuid = _instance_uuid(row)
                     issues.append(
@@ -151,9 +168,11 @@ def run_latest_falkor_abox_validation(
                     MATCH (n:{label})
                     WHERE n.{prop} IS NOT NULL
                     RETURN n.uuid, ID(n), n.{prop}
-                    LIMIT 1000
+                    LIMIT {CHECK_ROW_LIMIT}
                     """
                 )
+                if len(rows) >= CHECK_ROW_LIMIT:
+                    issues.append(_truncation_issue(class_info.name, f"datatype:{binding.name}"))
                 for row in rows:
                     instance_uuid = _instance_uuid(row)
                     val = row[2]
@@ -187,10 +206,12 @@ def run_latest_falkor_abox_validation(
                     WITH n, count(m) AS cnt
                     WHERE cnt < $min_count
                     RETURN n.uuid, ID(n), cnt
-                    LIMIT 1000
+                    LIMIT {CHECK_ROW_LIMIT}
                     """,
                     {"min_count": min_count},
                 )
+                if len(rows) >= CHECK_ROW_LIMIT:
+                    issues.append(_truncation_issue(class_info.name, f"min_count:{relationship.name}"))
                 for row in rows:
                     instance_uuid = _instance_uuid(row)
                     issues.append(
@@ -217,10 +238,12 @@ def run_latest_falkor_abox_validation(
                     WITH n, count(m) AS cnt
                     WHERE cnt > $max_count
                     RETURN n.uuid, ID(n), cnt
-                    LIMIT 1000
+                    LIMIT {CHECK_ROW_LIMIT}
                     """,
                     {"max_count": relationship.max_count},
                 )
+                if len(rows) >= CHECK_ROW_LIMIT:
+                    issues.append(_truncation_issue(class_info.name, f"max_count:{relationship.name}"))
                 for row in rows:
                     instance_uuid = _instance_uuid(row)
                     issues.append(
@@ -241,6 +264,10 @@ def run_latest_falkor_abox_validation(
                             },
                         )
                     )
+
+        issues.extend(_check_class_constraints(graph, class_info.name, label))
+
+    issues.extend(_check_relationship_constraints(graph))
 
     return store_latest_validation_report(
         graph=graph,
@@ -424,6 +451,30 @@ def _load_effective_property_bindings(
             {"class_name": class_name},
         )
     )
+    # SUBCLASS_OF ancestors contribute their direct and interface bindings too.
+    rows.extend(
+        _query_rows(
+            graph,
+            """
+            MATCH (c:ClassDef {name: $class_name})-[:SUBCLASS_OF*1..]->(:ClassDef)-[b:HAS_PROPERTY]->(p:PropertyDef)
+            RETURN p.name, p.datatype, b.required, b.unique
+            """,
+            {"class_name": class_name},
+        )
+    )
+    rows.extend(
+        _query_rows(
+            graph,
+            """
+            MATCH (c:ClassDef {name: $class_name})-[:SUBCLASS_OF*1..]->(:ClassDef)-[:IMPLEMENTS]->(:InterfaceDef)-[b:HAS_PROPERTY]->(p:PropertyDef)
+            RETURN p.name, p.datatype, b.required, b.unique
+            """,
+            {"class_name": class_name},
+        )
+    )
+    # Intentional narrow projection: validation only needs name/datatype/required/unique,
+    # so it OR-merges those rather than reusing schema.effective.merge_effective_properties
+    # (which builds full EffectivePropertyDef with nullable/default/metadata).
     merged: dict[str, _PropertyBindingInfo] = {}
     for name, datatype, required, unique in rows:
         existing = merged.get(name)
@@ -460,6 +511,494 @@ def _load_outgoing_relationships(
         )
         for row in rows
     ]
+
+
+# --- ConstraintDef enforcement -------------------------------------------------
+#
+# Constraints are declared in the TBox (kind: required / unique / composite_unique /
+# regex / range / expression) and enforced here against ABox instances. Values are
+# fetched and evaluated in Python (like the datatype checks) so enforcement does not
+# depend on Cypher regex/expression dialect support. The generic "expression" kind is
+# NOT executed — it would mean evaluating arbitrary code — so it is surfaced as an
+# info-level "constraint_not_enforced" issue instead of silently passing.
+
+_CONSTRAINT_RETURN = (
+    "RETURN con.id, con.kind, con.targetKind, con.targetId, con.propertyNames, "
+    "con.expression, con.severity"
+)
+
+
+def _constraint_from_row(row: list[Any]) -> _ConstraintInfo:
+    return _ConstraintInfo(
+        id=row[0],
+        kind=(row[1] or "").lower(),
+        target_kind=row[2],
+        target_id=row[3],
+        property_names=tuple(row[4] or []),
+        expression=row[5],
+        severity=row[6] or "error",
+    )
+
+
+def _load_constraints_for_class(
+    graph: FalkorGraph, class_name: str
+) -> list[_ConstraintInfo]:
+    """Constraints applying to a class: targeted directly, via an implemented
+    interface, or via a property the class (or its interfaces) binds."""
+    rows: list[list[Any]] = []
+    rows.extend(
+        _query_rows(
+            graph,
+            "MATCH (con:TBox:ConstraintDef {targetKind: 'class', targetId: $class_name}) "
+            + _CONSTRAINT_RETURN,
+            {"class_name": class_name},
+        )
+    )
+    rows.extend(
+        _query_rows(
+            graph,
+            """
+            MATCH (:ClassDef {name: $class_name})-[:IMPLEMENTS]->(i:InterfaceDef)
+            MATCH (con:TBox:ConstraintDef {targetKind: 'interface'})
+            WHERE con.targetId = i.name
+            """
+            + _CONSTRAINT_RETURN,
+            {"class_name": class_name},
+        )
+    )
+    # SUBCLASS_OF ancestors: their class-targeted and interface-targeted
+    # constraints apply to subclass instances as well.
+    rows.extend(
+        _query_rows(
+            graph,
+            """
+            MATCH (:ClassDef {name: $class_name})-[:SUBCLASS_OF*1..]->(a:ClassDef)
+            MATCH (con:TBox:ConstraintDef {targetKind: 'class'})
+            WHERE con.targetId = a.name
+            """
+            + _CONSTRAINT_RETURN,
+            {"class_name": class_name},
+        )
+    )
+    rows.extend(
+        _query_rows(
+            graph,
+            """
+            MATCH (:ClassDef {name: $class_name})-[:SUBCLASS_OF*1..]->(:ClassDef)-[:IMPLEMENTS]->(i:InterfaceDef)
+            MATCH (con:TBox:ConstraintDef {targetKind: 'interface'})
+            WHERE con.targetId = i.name
+            """
+            + _CONSTRAINT_RETURN,
+            {"class_name": class_name},
+        )
+    )
+    for pattern in (
+        "MATCH (:ClassDef {name: $class_name})-[:HAS_PROPERTY]->(p:PropertyDef)",
+        "MATCH (:ClassDef {name: $class_name})-[:IMPLEMENTS]->(:InterfaceDef)"
+        "-[:HAS_PROPERTY]->(p:PropertyDef)",
+        "MATCH (:ClassDef {name: $class_name})-[:SUBCLASS_OF*1..]->(:ClassDef)"
+        "-[:HAS_PROPERTY]->(p:PropertyDef)",
+    ):
+        rows.extend(
+            _query_rows(
+                graph,
+                f"""
+                {pattern}
+                MATCH (con:TBox:ConstraintDef {{targetKind: 'property'}})
+                WHERE con.targetId = p.name
+                """
+                + _CONSTRAINT_RETURN,
+                {"class_name": class_name},
+            )
+        )
+    constraints: dict[str, _ConstraintInfo] = {}
+    for row in rows:
+        info = _constraint_from_row(row)
+        constraints[info.id] = info
+    return sorted(constraints.values(), key=lambda value: value.id)
+
+
+def _constraint_properties(constraint: _ConstraintInfo) -> tuple[str, ...]:
+    if constraint.target_kind == "property":
+        return (constraint.target_id,)
+    return constraint.property_names
+
+
+def _check_class_constraints(
+    graph: FalkorGraph, class_name: str, label: str
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    for constraint in _load_constraints_for_class(graph, class_name):
+        props = _constraint_properties(constraint)
+        if constraint.kind == "required":
+            for prop_name in props:
+                prop = _safe_identifier(prop_name, "property")
+                rows = _query_rows(
+                    graph,
+                    f"""
+                    MATCH (n:{label})
+                    WHERE n.{prop} IS NULL
+                    RETURN n.uuid, ID(n)
+                    LIMIT {CHECK_ROW_LIMIT}
+                    """,
+                )
+                if len(rows) >= CHECK_ROW_LIMIT:
+                    issues.append(
+                        _truncation_issue(class_name, f"constraint:{constraint.id}")
+                    )
+                for row in rows:
+                    issues.append(
+                        _constraint_issue(
+                            constraint,
+                            code="constraint_required_violation",
+                            message=(
+                                f"{class_name}.{prop_name} is required by constraint "
+                                f"{constraint.id} but missing"
+                            ),
+                            class_name=class_name,
+                            instance_uuid=_instance_uuid(row),
+                            property_name=prop_name,
+                        )
+                    )
+        elif constraint.kind in ("unique", "composite_unique"):
+            if not props:
+                continue
+            safe = [_safe_identifier(p, "property") for p in props]
+            not_null = " AND ".join(f"n.{p} IS NOT NULL" for p in safe)
+            projection = ", ".join(f"n.{p} AS v{i}" for i, p in enumerate(safe))
+            value_cols = ", ".join(f"v{i}" for i in range(len(safe)))
+            rows = _query_rows(
+                graph,
+                f"""
+                MATCH (n:{label})
+                WHERE {not_null}
+                WITH {projection}, count(n) AS cnt
+                WHERE cnt > 1
+                RETURN {value_cols}, cnt
+                LIMIT {CHECK_ROW_LIMIT}
+                """,
+            )
+            for row in rows:
+                values = dict(zip(props, row[:-1]))
+                issues.append(
+                    _constraint_issue(
+                        constraint,
+                        code="constraint_composite_unique_violation",
+                        message=(
+                            f"{class_name} values {values} must be unique "
+                            f"(constraint {constraint.id}) but appear {row[-1]} times"
+                        ),
+                        class_name=class_name,
+                        metadata={"values": values, "count": row[-1]},
+                    )
+                )
+        elif constraint.kind == "regex":
+            predicate = _compile_regex(constraint)
+            if predicate is None:
+                issues.append(_invalid_expression_issue(constraint, class_name))
+                continue
+            issues.extend(
+                _check_value_constraint(
+                    graph,
+                    constraint,
+                    class_name=class_name,
+                    label=label,
+                    props=props,
+                    predicate=predicate,
+                    code="constraint_regex_violation",
+                    describe=f"must match regex {constraint.expression!r}",
+                )
+            )
+        elif constraint.kind == "range":
+            predicate = _compile_range(constraint)
+            if predicate is None:
+                issues.append(_invalid_expression_issue(constraint, class_name))
+                continue
+            issues.extend(
+                _check_value_constraint(
+                    graph,
+                    constraint,
+                    class_name=class_name,
+                    label=label,
+                    props=props,
+                    predicate=predicate,
+                    code="constraint_range_violation",
+                    describe=f"must be in range {constraint.expression!r}",
+                )
+            )
+        else:
+            issues.append(
+                _issue(
+                    code="constraint_not_enforced",
+                    severity="info",
+                    message=(
+                        f"Constraint {constraint.id} (kind={constraint.kind!r}) on "
+                        f"{class_name} is not enforced by ABox validation"
+                    ),
+                    class_name=class_name,
+                    metadata={"constraintId": constraint.id, "kind": constraint.kind},
+                )
+            )
+    return issues
+
+
+def _check_value_constraint(
+    graph: FalkorGraph,
+    constraint: _ConstraintInfo,
+    *,
+    class_name: str,
+    label: str,
+    props: tuple[str, ...],
+    predicate: Any,
+    code: str,
+    describe: str,
+) -> list[ValidationIssue]:
+    """Fetch non-null values of each property and report rows failing ``predicate``."""
+    issues: list[ValidationIssue] = []
+    for prop_name in props:
+        prop = _safe_identifier(prop_name, "property")
+        rows = _query_rows(
+            graph,
+            f"""
+            MATCH (n:{label})
+            WHERE n.{prop} IS NOT NULL
+            RETURN n.uuid, ID(n), n.{prop}
+            LIMIT {CHECK_ROW_LIMIT}
+            """,
+        )
+        if len(rows) >= CHECK_ROW_LIMIT:
+            issues.append(_truncation_issue(class_name, f"constraint:{constraint.id}"))
+        for row in rows:
+            if predicate(row[2]):
+                continue
+            issues.append(
+                _constraint_issue(
+                    constraint,
+                    code=code,
+                    message=(
+                        f"{class_name}.{prop_name} {describe} "
+                        f"(constraint {constraint.id}) but got: {row[2]!r}"
+                    ),
+                    class_name=class_name,
+                    instance_uuid=_instance_uuid(row),
+                    property_name=prop_name,
+                    metadata={"value": row[2]},
+                )
+            )
+    return issues
+
+
+def _check_relationship_constraints(graph: FalkorGraph) -> list[ValidationIssue]:
+    """Enforce required/regex/range constraints on relationship (edge) properties."""
+    issues: list[ValidationIssue] = []
+    rows = _query_rows(
+        graph,
+        """
+        MATCH (con:TBox:ConstraintDef {targetKind: 'relationship'})
+        MATCH (r:TBox:RelationshipDef)-[:FROM_CLASS]->(f:ClassDef)
+        MATCH (r)-[:TO_CLASS]->(t:ClassDef)
+        WHERE con.targetId = r.id
+        RETURN con.id, con.kind, con.targetKind, con.targetId, con.propertyNames,
+               con.expression, con.severity, r.name, f.name, t.name
+        """,
+    )
+    for row in rows:
+        constraint = _constraint_from_row(row[:7])
+        rel_name, from_class, to_class = row[7], row[8], row[9]
+        rel_type = _safe_identifier(rel_name, "relationship")
+        from_label = _safe_identifier(from_class, "class")
+        to_label = _safe_identifier(to_class, "class")
+        props = constraint.property_names
+        if constraint.kind == "regex":
+            predicate = _compile_regex(constraint)
+        elif constraint.kind == "range":
+            predicate = _compile_range(constraint)
+        elif constraint.kind == "required":
+            predicate = None
+        else:
+            issues.append(
+                _issue(
+                    code="constraint_not_enforced",
+                    severity="info",
+                    message=(
+                        f"Constraint {constraint.id} (kind={constraint.kind!r}) on "
+                        f"relationship {rel_name} is not enforced by ABox validation"
+                    ),
+                    relationship_name=rel_name,
+                    metadata={"constraintId": constraint.id, "kind": constraint.kind},
+                )
+            )
+            continue
+        if constraint.kind in ("regex", "range") and predicate is None:
+            issues.append(_invalid_expression_issue(constraint, from_class))
+            continue
+        for prop_name in props:
+            prop = _safe_identifier(prop_name, "property")
+            if constraint.kind == "required":
+                edge_rows = _query_rows(
+                    graph,
+                    f"""
+                    MATCH (:{from_label})-[r:{rel_type}]->(:{to_label})
+                    WHERE r.{prop} IS NULL
+                    RETURN r.uuid
+                    LIMIT {CHECK_ROW_LIMIT}
+                    """,
+                )
+                for edge_row in edge_rows:
+                    issues.append(
+                        _constraint_issue(
+                            constraint,
+                            code="constraint_required_violation",
+                            message=(
+                                f"{rel_name}.{prop_name} is required by constraint "
+                                f"{constraint.id} but missing"
+                            ),
+                            instance_uuid=str(edge_row[0]) if edge_row[0] else None,
+                            relationship_name=rel_name,
+                            property_name=prop_name,
+                        )
+                    )
+                continue
+            edge_rows = _query_rows(
+                graph,
+                f"""
+                MATCH (:{from_label})-[r:{rel_type}]->(:{to_label})
+                WHERE r.{prop} IS NOT NULL
+                RETURN r.uuid, r.{prop}
+                LIMIT {CHECK_ROW_LIMIT}
+                """,
+            )
+            for edge_row in edge_rows:
+                if predicate is None or predicate(edge_row[1]):
+                    continue
+                code = (
+                    "constraint_regex_violation"
+                    if constraint.kind == "regex"
+                    else "constraint_range_violation"
+                )
+                issues.append(
+                    _constraint_issue(
+                        constraint,
+                        code=code,
+                        message=(
+                            f"{rel_name}.{prop_name} violates constraint "
+                            f"{constraint.id} ({constraint.expression!r}); "
+                            f"got: {edge_row[1]!r}"
+                        ),
+                        instance_uuid=str(edge_row[0]) if edge_row[0] else None,
+                        relationship_name=rel_name,
+                        property_name=prop_name,
+                        metadata={"value": edge_row[1]},
+                    )
+                )
+    return issues
+
+
+def _compile_regex(constraint: _ConstraintInfo) -> Any | None:
+    if not constraint.expression:
+        return None
+    try:
+        pattern = re.compile(constraint.expression)
+    except re.error:
+        return None
+    return lambda value: isinstance(value, str) and bool(pattern.fullmatch(value))
+
+
+# Range expression grammar: "a..b" (inclusive, either bound optional) or a single
+# comparison: ">=a", "<=a", ">a", "<a". Non-numeric values fail the constraint.
+_RANGE_DOTS_RE = re.compile(r"^\s*(-?\d+(?:\.\d+)?)?\s*\.\.\s*(-?\d+(?:\.\d+)?)?\s*$")
+_RANGE_CMP_RE = re.compile(r"^\s*(>=|<=|>|<)\s*(-?\d+(?:\.\d+)?)\s*$")
+
+
+def _compile_range(constraint: _ConstraintInfo) -> Any | None:
+    expr = constraint.expression or ""
+    match = _RANGE_DOTS_RE.match(expr)
+    if match and (match.group(1) is not None or match.group(2) is not None):
+        low = float(match.group(1)) if match.group(1) is not None else None
+        high = float(match.group(2)) if match.group(2) is not None else None
+
+        def in_bounds(value: Any) -> bool:
+            number = _as_number(value)
+            if number is None:
+                return False
+            if low is not None and number < low:
+                return False
+            if high is not None and number > high:
+                return False
+            return True
+
+        return in_bounds
+    match = _RANGE_CMP_RE.match(expr)
+    if match:
+        op, bound_text = match.group(1), float(match.group(2))
+        ops = {
+            ">=": lambda n: n >= bound_text,
+            "<=": lambda n: n <= bound_text,
+            ">": lambda n: n > bound_text,
+            "<": lambda n: n < bound_text,
+        }
+        compare = ops[op]
+
+        def satisfies(value: Any) -> bool:
+            number = _as_number(value)
+            return number is not None and compare(number)
+
+        return satisfies
+    return None
+
+
+def _as_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _constraint_issue(
+    constraint: _ConstraintInfo,
+    *,
+    code: str,
+    message: str,
+    class_name: str | None = None,
+    instance_uuid: str | None = None,
+    property_name: str | None = None,
+    relationship_name: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> ValidationIssue:
+    issue_metadata = dict(metadata or {})
+    issue_metadata["constraintId"] = constraint.id
+    severity = constraint.severity if constraint.severity in ("info", "warning", "error") else "error"
+    return _issue(
+        code=code,
+        severity=severity,
+        message=message,
+        class_name=class_name,
+        instance_uuid=instance_uuid,
+        property_name=property_name,
+        relationship_name=relationship_name,
+        metadata=issue_metadata,
+    )
+
+
+def _invalid_expression_issue(
+    constraint: _ConstraintInfo, class_name: str
+) -> ValidationIssue:
+    return _issue(
+        code="constraint_invalid_expression",
+        severity="warning",
+        message=(
+            f"Constraint {constraint.id} has an invalid {constraint.kind} expression: "
+            f"{constraint.expression!r}; it was not enforced"
+        ),
+        class_name=class_name,
+        metadata={"constraintId": constraint.id, "expression": constraint.expression},
+    )
 
 
 def _count_instances(graph: FalkorGraph, label: str) -> int:
@@ -517,6 +1056,20 @@ def _issue(
         target_kind="class" if class_name else "edge",
         target_id=class_name or relationship_name or property_name or "validation",
         metadata=issue_metadata,
+    )
+
+
+def _truncation_issue(class_name: str, check: str) -> ValidationIssue:
+    """Warning emitted when a check hits ``CHECK_ROW_LIMIT`` — violations past the cap are
+    not reported, so the run is incomplete for this class/check."""
+    return _issue(
+        code="check_truncated",
+        severity="warning",
+        message=(
+            f"{class_name}: '{check}' check hit the {CHECK_ROW_LIMIT}-row cap; "
+            "violations beyond it are not reported. Narrow the data or raise the cap."
+        ),
+        class_name=class_name,
     )
 
 

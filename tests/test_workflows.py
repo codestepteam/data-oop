@@ -4,7 +4,6 @@ from falkordb import FalkorDB
 
 from data_oop import (
     FalkorTBoxRepository,
-    connect_and_clear_abox_nodes,
     save_workflow,
     run_workflow,
 )
@@ -156,7 +155,9 @@ def test_conditional_and_loop_workflow_execution(falkor_graph) -> None:
             "action": "create_node",
             "class_name": "Event",
             "properties": {
-                "name": "{event_name}"
+                "name": "{event_name}",
+                "start_date": "2026-01-01",
+                "description": "loop/condition test event"
             }
         },
         {
@@ -292,7 +293,9 @@ def test_nested_workflow_execution(falkor_graph) -> None:
             "action": "create_node",
             "class_name": "Event",
             "properties": {
-                "name": "{event_name}"
+                "name": "{event_name}",
+                "start_date": "2026-01-01",
+                "description": "nested workflow test event"
             }
         },
         {
@@ -373,7 +376,9 @@ def test_workflow_execution_rollback_on_failure(falkor_graph) -> None:
             "action": "create_node",
             "class_name": "Event",
             "properties": {
-                "name": "Event To Rollback"
+                "name": "Event To Rollback",
+                "start_date": "2026-01-01",
+                "description": "rollback test event"
             }
         },
         {
@@ -440,7 +445,9 @@ def test_nested_workflow_rollback_on_failure(falkor_graph) -> None:
             "action": "create_node",
             "class_name": "Event",
             "properties": {
-                "name": "Event To Rollback 2"
+                "name": "Event To Rollback 2",
+                "start_date": "2026-01-01",
+                "description": "nested rollback test event"
             }
         },
         {

@@ -31,6 +31,17 @@ class TBoxValidationError(TBoxError):
         super().__init__(f"TBox validation failed: {codes}")
 
 
+class ABoxValidationError(TBoxError):
+    """Raised by write-time ABox validation when an upsert violates the TBox.
+
+    ``errors`` lists each violation as a human-readable message.
+    """
+
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = errors
+        super().__init__("ABox write validation failed: " + "; ".join(errors))
+
+
 class TriggerCycleError(TBoxConflictError):
     """Raised when attaching a trigger would create a cycle in the trigger graph
     (an infinite/divergent callback loop).

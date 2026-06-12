@@ -2,8 +2,11 @@
 result row into one aggregate/segment ABox node.
 
 Raw source rows never enter the graph — only the aggregates the query produces do.
-Node identity uses a freshly generated uuid (the library's ABox convention), so
-re-sync is made idempotent by ``prune``-then-insert rather than by a stable key.
+Node identity is a deterministic uuid5 derived from (class, connector, key_columns
+values), so the same business row keeps the same node uuid across re-syncs —
+relationships, caches, and external references to a materialized node survive a
+sync. A binding without ``key_columns`` falls back to a fresh uuid4 per row (no
+stable identity to derive from).
 
 The fetch loop fails fast on bad SQL: a NULL key column or a duplicate key tuple
 raises before anything is written, turning silent aggregate corruption (a wrong
@@ -14,7 +17,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from data_oop.rdb.connectors import fetch_rows
 from data_oop.exceptions import TBoxError, TBoxNotFoundError
@@ -28,6 +31,11 @@ from data_oop.schema.repository import TBoxRepository
 SYNCED_AT_PROP = "synced_at"
 SOURCE_CONNECTOR_PROP = "source_connector"
 
+# Safety cap: a misconfigured binding (e.g. a missing GROUP BY) can return an unbounded
+# result set and create that many nodes. Refuse rather than silently materialize a flood;
+# callers that genuinely need more raise the cap explicitly.
+DEFAULT_MAX_ROWS = 100_000
+
 
 def materialize_source(
     *,
@@ -36,11 +44,14 @@ def materialize_source(
     class_name: str,
     prune: bool = True,
     now: str | None = None,
+    max_rows: int = DEFAULT_MAX_ROWS,
 ) -> MaterializeResult:
     """Run the source query bound to ``class_name`` and materialize its rows as ABox nodes.
 
     With ``prune=True`` (default) every node previously materialized for this class from the
-    same connector is deleted first, so re-sync replaces rather than accumulates.
+    same connector is deleted first, so re-sync replaces rather than accumulates. Raises
+    ``TBoxError`` if the query returns more than ``max_rows`` rows, so a runaway binding
+    fails loudly instead of flooding the graph.
     """
     binding = repo.get_source_binding(class_name)
     if binding is None:
@@ -54,6 +65,11 @@ def materialize_source(
         raise TBoxNotFoundError(f"ConnectorDef not found: {binding.connector_name}")
 
     rows = fetch_rows(connector, binding.sql)
+    if len(rows) > max_rows:
+        raise TBoxError(
+            f"sync({class_name}): query returned {len(rows)} rows, exceeding max_rows={max_rows}. "
+            f"Tighten the binding SQL (filter/GROUP BY) or raise max_rows explicitly."
+        )
     mapped = _map_and_guard(rows, binding)
 
     synced_at = now or datetime.now(timezone.utc).isoformat()
@@ -66,15 +82,17 @@ def materialize_source(
     edges_upserted = 0
     links_missing = 0
     for props, row in zip(mapped, rows):
-        node_uuid = str(uuid4())
+        node_uuid = _node_uuid(binding, connector.name, row)
         # Bulk materialization may upsert thousands of rows; do not fire triggers
-        # per row or a single sync could fan out into a trigger storm.
+        # per row or a single sync could fan out into a trigger storm. Write-time
+        # validation is also skipped — batch validation covers synced data.
         upsert_abox_node(
             graph=graph,
             class_name=class_name,
             uuid=node_uuid,
             properties={**props, SYNCED_AT_PROP: synced_at, SOURCE_CONNECTOR_PROP: connector.name},
             fire_triggers=False,
+            validate=False,
         )
         for link in binding.links:
             created = _materialize_link(
@@ -98,6 +116,25 @@ def materialize_source(
         synced_at=synced_at,
         edges_upserted=edges_upserted,
         links_missing=links_missing,
+    )
+
+
+def _node_uuid(binding: SourceBinding, connector_name: str, row: dict[str, Any]) -> str:
+    """Stable node identity for a synced row.
+
+    uuid5 over (class, connector, key values) — the same business key always maps to
+    the same uuid, so re-sync updates in place instead of minting new identities.
+    """
+    if not binding.key_columns:
+        return str(uuid4())
+    key_part = "\x1f".join(
+        f"{column}={row.get(column)!r}" for column in binding.key_columns
+    )
+    return str(
+        uuid5(
+            NAMESPACE_URL,
+            f"data-oop:{binding.class_name}:{connector_name}:{key_part}",
+        )
     )
 
 
@@ -203,6 +240,7 @@ def connect_and_materialize_source(
     password: str | None = None,
     class_name: str,
     prune: bool = True,
+    max_rows: int = DEFAULT_MAX_ROWS,
 ) -> MaterializeResult:
     """Connect to FalkorDB and materialize one source-backed class."""
     from falkordb import FalkorDB
@@ -212,4 +250,6 @@ def connect_and_materialize_source(
     db = FalkorDB(host=host, port=port, username=username, password=password)
     graph = db.select_graph(graph_name)
     repo = FalkorTBoxRepository(graph)
-    return materialize_source(repo=repo, graph=graph, class_name=class_name, prune=prune)
+    return materialize_source(
+        repo=repo, graph=graph, class_name=class_name, prune=prune, max_rows=max_rows
+    )

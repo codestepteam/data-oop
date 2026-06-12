@@ -61,14 +61,22 @@ class TBoxBuilder:
         label: str | None = None,
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
+        parent: str | None = None,
     ) -> ClassBuilder:
-        """Create a ClassDef and return a ClassBuilder to chain properties."""
+        """Create a ClassDef and return a ClassBuilder to chain properties.
+
+        ``parent`` declares a SUBCLASS_OF edge to an already-defined class; the new
+        class inherits the parent's property bindings and constraints, and its ABox
+        instances carry the parent's label.
+        """
         self.repo.create_class(
             name,
             label=label,
             description=description,
             metadata=metadata,
         )
+        if parent is not None:
+            self.repo.set_subclass_of(class_name=name, parent_name=parent)
         return ClassBuilder(self, name)
 
     def relationship(

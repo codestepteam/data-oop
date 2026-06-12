@@ -10,8 +10,11 @@ has none, so result size stays bounded.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 500
@@ -76,8 +79,16 @@ def abox_query(
     """
     q = _ensure_limit(cypher, limit)
     # Native read-only execution rejects any write at the DB level. Fall back to plain
-    # query only for non-FalkorDB graph stand-ins (e.g. test fakes) that lack ro_query.
-    runner = getattr(graph, "ro_query", None) or graph.query
+    # query only for non-FalkorDB graph stand-ins (e.g. test fakes) that lack ro_query —
+    # but warn, since that path cannot guarantee the read-only contract.
+    runner = getattr(graph, "ro_query", None)
+    if runner is None:
+        _log.warning(
+            "graph %r has no ro_query(); falling back to writable query() — "
+            "read-only execution is NOT guaranteed for abox_query",
+            type(graph).__name__,
+        )
+        runner = graph.query
     result = runner(q, params or {}, timeout=timeout_ms) if timeout_ms else runner(q, params or {})
     rows = list(getattr(result, "result_set", []) or [])
     if not rows:

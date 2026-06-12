@@ -5,6 +5,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from data_oop.schema.models import (
     ClassDef,
     ConnectorDef,
+    ConnectorKind,
     ConstraintDef,
     EffectivePropertyDef,
     InterfaceDef,
@@ -46,6 +47,21 @@ class TBoxRepository(Protocol):
     def list_classes(
         self, *, implements: str | None = None, has_property: str | None = None
     ) -> list[ClassDef]: ...
+
+    # Subclass hierarchy (SUBCLASS_OF)
+    def set_subclass_of(self, *, class_name: str, parent_name: str) -> None: ...
+
+    def remove_subclass_of(self, *, class_name: str, parent_name: str) -> None: ...
+
+    def get_superclasses(
+        self, class_name: str, *, transitive: bool = True
+    ) -> list[ClassDef]: ...
+
+    def get_subclasses(
+        self, class_name: str, *, transitive: bool = True
+    ) -> list[ClassDef]: ...
+
+    def is_subclass_of(self, *, class_name: str, parent_name: str) -> bool: ...
 
     # Interface
     def create_interface(
@@ -269,7 +285,7 @@ class TBoxRepository(Protocol):
         self,
         name: str,
         *,
-        kind: Literal["mysql", "postgres"] = "postgres",
+        kind: ConnectorKind = "postgres",
         dsn_ref: str = "",
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
