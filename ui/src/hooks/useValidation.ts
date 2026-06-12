@@ -1,17 +1,18 @@
 import { useState, useCallback } from "react";
-import type { ValidationRun, ValidationIssue } from "../types";
+import { apiFetch } from "../api";
+import type { ValidationRun, ValidationIssue, AboxCount, AboxNode } from "../types";
 
 export function useValidation() {
   const [validationRun, setValidationRun] = useState<ValidationRun | null>(null);
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
   const [validating, setValidating] = useState(false);
 
-  const [aboxCounts, setAboxCounts] = useState<{ label: string; count: number }[]>([]);
-  const [aboxNodes, setAboxNodes] = useState<any[]>([]);
+  const [aboxCounts, setAboxCounts] = useState<AboxCount[]>([]);
+  const [aboxNodes, setAboxNodes] = useState<AboxNode[]>([]);
 
   const fetchLatestValidation = useCallback(async () => {
     try {
-      const res = await fetch("/api/validation/latest");
+      const res = await apiFetch("/api/validation/latest");
       const data = await res.json();
       setValidationRun(data.run);
       setValidationIssues(data.issues);
@@ -22,7 +23,7 @@ export function useValidation() {
 
   const fetchAboxData = useCallback(async () => {
     try {
-      const res = await fetch("/api/abox/nodes");
+      const res = await apiFetch("/api/abox/nodes");
       const data = await res.json();
       setAboxCounts(data.counts || []);
       setAboxNodes(data.nodes || []);
@@ -34,7 +35,7 @@ export function useValidation() {
   const runValidation = useCallback(async () => {
     setValidating(true);
     try {
-      const res = await fetch("/api/validation", { method: "POST" });
+      const res = await apiFetch("/api/validation", { method: "POST" });
       await res.json();
       await fetchLatestValidation();
     } catch (err) {

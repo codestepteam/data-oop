@@ -1,12 +1,12 @@
 import { CheckCircle, AlertTriangle, RefreshCw } from "lucide-react";
-import type { ValidationRun, ValidationIssue } from "../types";
+import type { ValidationRun, ValidationIssue, AboxCount, AboxNode } from "../types";
 
 interface ValidationTabProps {
   validationRun: ValidationRun | null;
   validationIssues: ValidationIssue[];
   validating: boolean;
-  aboxCounts: { label: string; count: number }[];
-  aboxNodes: any[];
+  aboxCounts: AboxCount[];
+  aboxNodes: AboxNode[];
   onRunValidation: () => void;
   onRefreshStats: () => void;
 }

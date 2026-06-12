@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { X, Search, RefreshCw } from "lucide-react";
+import { apiFetch } from "../api";
+import type { AboxNode } from "../types";
 
 interface NodeSelectorModalProps {
   isOpen: boolean;
@@ -9,7 +11,7 @@ interface NodeSelectorModalProps {
 }
 
 export function NodeSelectorModal({ isOpen, targetClass, onClose, onSelect }: NodeSelectorModalProps) {
-  const [nodes, setNodes] = useState<{ uuid: string; display_name: string; properties: any }[]>([]);
+  const [nodes, setNodes] = useState<AboxNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -23,7 +25,7 @@ export function NodeSelectorModal({ isOpen, targetClass, onClose, onSelect }: No
     setLoading(true);
     setSearch("");
     try {
-      const res = await fetch(`/api/abox/nodes/${targetClass}`);
+      const res = await apiFetch(`/api/abox/nodes/${targetClass}`);
       const data = await res.json();
       setNodes(data || []);
     } catch (err) {

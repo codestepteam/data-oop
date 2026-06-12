@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
-import type { Workflow, WorkflowStep, WorkflowParameter, TBoxClass, TBoxRelationship } from "../types";
+import { apiFetch } from "../api";
+import type { Workflow, WorkflowStep, WorkflowParameter, TBoxClass, TBoxRelationship, RunResult } from "../types";
 
 export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRelationship[] }, onWorkflowRunSuccess?: () => void) {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -14,8 +15,12 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
 
   // Execution states
   const [runParams, setRunParams] = useState<Record<string, string>>({});
-  const [runResult, setRunResult] = useState<any | null>(null);
+  const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [running, setRunning] = useState(false);
+
+  // Inline error surfaced to the editor (replaces alert()).
+  const [actionError, setActionError] = useState<string | null>(null);
+  const clearActionError = useCallback(() => setActionError(null), []);
 
   // DSL states
   const [dslCode, setDslCode] = useState("");
@@ -33,7 +38,7 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
     }
     setGeneratingDsl(true);
     try {
-      const res = await fetch("/api/workflows/dsl", {
+      const res = await apiFetch("/api/workflows/dsl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -69,7 +74,7 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
   const [parameterTypes, setParameterTypes] = useState<string[]>([]);
 
   useEffect(() => {
-    fetch("/api/workflows/parameter-types")
+    apiFetch("/api/workflows/parameter-types")
       .then(res => res.json())
       .then(data => setParameterTypes(data))
       .catch(err => console.error("Error fetching parameter types", err));
@@ -88,7 +93,7 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
   const fetchWorkflows = useCallback(async () => {
     setLoadingWorkflows(true);
     try {
-      const res = await fetch("/api/workflows");
+      const res = await apiFetch("/api/workflows");
       const data = await res.json();
       setWorkflows(data);
     } catch (err) {
@@ -151,7 +156,7 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
 
   const persistWorkflow = useCallback(async (parametersToSave: WorkflowParameter[], showAlert = true) => {
     if (!editorName) {
-      if (showAlert) alert("Workflow name is required");
+      if (showAlert) setActionError("Workflow name is required");
       return false;
     }
     try {
@@ -161,16 +166,17 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
         steps: editorSteps,
         parameters: parametersToSave,
       };
-      const res = await fetch("/api/workflows", {
+      const res = await apiFetch("/api/workflows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(`Workflow save failed: ${data.detail || res.statusText}`);
+        setActionError(`Workflow save failed: ${data.detail || res.statusText}`);
         return false;
       }
+      setActionError(null);
       setSelectedWorkflow(prev => {
         if (prev && prev.name !== editorName) return prev;
         return {
@@ -182,20 +188,20 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
         } as Workflow;
       });
       await fetchWorkflows();
-      if (showAlert) alert("Workflow saved successfully!");
       return true;
     } catch (err) {
       console.error(err);
-      alert(`Workflow save failed: ${err}`);
+      setActionError(`Workflow save failed: ${err}`);
       return false;
     }
   }, [editorName, editorDesc, editorSteps, fetchWorkflows]);
 
   const addParameter = useCallback((newParam: WorkflowParameter) => {
     if (editorParameters.some(p => p.name === newParam.name)) {
-      alert("Parameter already exists");
+      setActionError("Parameter already exists");
       return false;
     }
+    setActionError(null);
     setEditorParameters(params => [...params, newParam]);
     return true;
   }, [editorParameters]);
@@ -206,7 +212,7 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
 
   const saveEditedParam = useCallback(async (idx: number, updatedParam: WorkflowParameter) => {
     if (editorParameters.some((p, i) => i !== idx && p.name === updatedParam.name)) {
-      alert("Parameter already exists");
+      setActionError("Parameter already exists");
       return false;
     }
     const updated = [...editorParameters];
@@ -251,7 +257,7 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
     });
 
     try {
-      const res = await fetch(`/api/workflows/${selectedWorkflow.name}/run`, {
+      const res = await apiFetch(`/api/workflows/${selectedWorkflow.name}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ parameters: parsedParams }),
@@ -267,7 +273,7 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
     } finally {
       setRunning(false);
     }
-  }, [selectedWorkflow, runParams, onWorkflowRunSuccess]);
+  }, [selectedWorkflow, runParams, editorParameters, onWorkflowRunSuccess]);
 
   const resetEditor = useCallback(() => {
     setEditorName("");
@@ -276,6 +282,7 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
     setEditorParameters([]);
     setSelectedWorkflow(null);
     setRunResult(null);
+    setActionError(null);
   }, []);
 
   return {
@@ -309,5 +316,7 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
     generatingDsl,
     parameterTypes,
     resetEditor,
+    actionError,
+    clearActionError,
   };
 }

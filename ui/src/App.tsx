@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 import { Database } from "lucide-react";
 
+// API client
+import { apiFetch, getActiveGraph, setActiveGraph } from "./api";
+
 // Hooks
 import { useTBox } from "./hooks/useTBox";
 import { useValidation } from "./hooks/useValidation";
@@ -12,24 +15,6 @@ import { ValidationTab } from "./components/ValidationTab";
 import { WorkflowTab } from "./components/WorkflowTab";
 import { NodeSelectorModal } from "./components/NodeSelectorModal";
 
-// Intercept all fetch requests to inject x-graph-name header
-const originalFetch = window.fetch;
-window.fetch = async (input, init) => {
-  const selectedGraph = localStorage.getItem("selected_graph") || "data_oop";
-  const newInit = { ...init };
-  const newHeaders = new Headers(newInit.headers || (input instanceof Request ? input.headers : undefined));
-  if (!newHeaders.has("x-graph-name")) {
-    newHeaders.set("x-graph-name", selectedGraph);
-  }
-  newInit.headers = newHeaders;
-  
-  if (input instanceof Request) {
-    const req = new Request(input, newInit);
-    return originalFetch(req);
-  }
-  return originalFetch(input, newInit);
-};
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<"tbox" | "validation" | "workflow">(() => {
     const params = new URLSearchParams(window.location.search);
@@ -40,21 +25,19 @@ export default function App() {
     return "tbox";
   });
 
-  const [selectedGraph, setSelectedGraph] = useState(() => {
-    return localStorage.getItem("selected_graph") || "data_oop";
-  });
-  const [graphs, setGraphs] = useState<string[]>(["data_oop"]);
+  const [selectedGraph, setSelectedGraph] = useState(getActiveGraph);
+  const [graphs, setGraphs] = useState<string[]>([getActiveGraph()]);
 
   // Fetch list of graphs on mount
   useEffect(() => {
-    fetch("/api/graphs")
+    apiFetch("/api/graphs")
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data)) {
           setGraphs(data);
           if (!data.includes(selectedGraph) && data.length > 0) {
             setSelectedGraph(data[0]);
-            localStorage.setItem("selected_graph", data[0]);
+            setActiveGraph(data[0]);
           }
         }
       })
@@ -123,6 +106,8 @@ export default function App() {
     dslCode,
     parameterTypes,
     resetEditor,
+    actionError,
+    clearActionError,
   } = useWorkflow(tbox, fetchAboxData);
 
   // Shared Node Selector Modal state
@@ -180,7 +165,7 @@ export default function App() {
               onChange={(e) => {
                 const val = e.target.value;
                 setSelectedGraph(val);
-                localStorage.setItem("selected_graph", val);
+                setActiveGraph(val);
               }}
               className="bg-transparent text-white text-sm font-semibold focus:outline-none cursor-pointer pr-1"
             >
@@ -278,6 +263,8 @@ export default function App() {
             onResetEditor={resetEditor}
             dslCode={dslCode}
             openNodeSelector={openNodeSelector}
+            actionError={actionError}
+            onClearActionError={clearActionError}
           />
         )}
       </main>

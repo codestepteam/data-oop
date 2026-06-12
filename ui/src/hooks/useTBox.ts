@@ -1,7 +1,9 @@
 import { useState, useCallback } from "react";
+import { apiFetch } from "../api";
 import type {
   TBoxClass,
   TBoxInterface,
+  TBoxProperty,
   TBoxRelationship,
   ConnectorDef,
   SourceBinding,
@@ -26,9 +28,9 @@ export function useTBox() {
   const [tbox, setTBox] = useState<{
     classes: TBoxClass[];
     interfaces: TBoxInterface[];
-    properties: any[];
+    properties: TBoxProperty[];
     relationships: TBoxRelationship[];
-    constraints: any[];
+    constraints: unknown[];
     connectors?: ConnectorDef[];
     source_bindings?: SourceBinding[];
     views?: ViewDef[];
@@ -39,7 +41,7 @@ export function useTBox() {
   const fetchTBox = useCallback(async () => {
     setLoadingTBox(true);
     try {
-      const res = await fetch("/api/tbox");
+      const res = await apiFetch("/api/tbox");
       const data = await res.json();
       setTBox(data);
     } catch (err) {
@@ -51,7 +53,7 @@ export function useTBox() {
 
   const createClass = useCallback(async (name: string, label: string, description: string) => {
     try {
-      const res = await fetch("/api/tbox/class", {
+      const res = await apiFetch("/api/tbox/class", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, label, description }),
@@ -68,7 +70,7 @@ export function useTBox() {
 
   const createProperty = useCallback(async (name: string, datatype: string, description: string) => {
     try {
-      const res = await fetch("/api/tbox/property", {
+      const res = await apiFetch("/api/tbox/property", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, datatype, description }),
@@ -85,7 +87,7 @@ export function useTBox() {
 
   const attachProperty = useCallback(async (className: string, propertyName: string, required: boolean, unique: boolean) => {
     try {
-      const res = await fetch("/api/tbox/property/attach", {
+      const res = await apiFetch("/api/tbox/property/attach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -107,7 +109,7 @@ export function useTBox() {
 
   const createRelationship = useCallback(async (id: string, name: string, fromClass: string, toClass: string, required: boolean) => {
     try {
-      const res = await fetch("/api/tbox/relationship", {
+      const res = await apiFetch("/api/tbox/relationship", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -133,7 +135,7 @@ export function useTBox() {
   const validateTriggers = useCallback(
     async (candidate?: TriggerInput): Promise<TriggerGraphReport | null> => {
       try {
-        const res = await fetch("/api/tbox/triggers/validate", {
+        const res = await apiFetch("/api/tbox/triggers/validate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: candidate ? JSON.stringify(candidate) : "null",
@@ -150,7 +152,7 @@ export function useTBox() {
   const createTrigger = useCallback(
     async (input: TriggerInput): Promise<{ ok: boolean; error?: string; cycles?: string[][] }> => {
       try {
-        const res = await fetch("/api/tbox/trigger", {
+        const res = await apiFetch("/api/tbox/trigger", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
@@ -177,7 +179,7 @@ export function useTBox() {
   const deleteTrigger = useCallback(
     async (className: string, name: string): Promise<boolean> => {
       try {
-        const res = await fetch("/api/tbox/trigger/delete", {
+        const res = await apiFetch("/api/tbox/trigger/delete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ class_name: className, name }),

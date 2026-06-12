@@ -5,7 +5,7 @@ export interface TBoxProperty {
   required: boolean;
   unique: boolean;
   nullable: boolean;
-  default: any;
+  default: unknown;
   source_kind: string;
   source_id: string;
 }
@@ -21,7 +21,7 @@ export interface TBoxClass {
 export interface TBoxInterface {
   name: string;
   description: string | null;
-  properties: any[];
+  properties: TBoxProperty[];
 }
 
 export interface TBoxRelationship {
@@ -152,4 +152,23 @@ export interface ValidationRun {
   checked_instance_count: number;
   error_count: number;
   warning_count: number;
+}
+
+export interface AboxCount {
+  label: string;
+  count: number;
+}
+
+export interface AboxNode {
+  uuid: string;
+  display_name: string;
+  label?: string;
+  properties: Record<string, unknown>;
+}
+
+/** Result of a workflow run, as returned by POST /api/workflows/{name}/run. */
+export interface RunResult {
+  status?: string;
+  error?: string;
+  [key: string]: unknown;
 }
