@@ -11,8 +11,10 @@ and a credentials env-var reference from ``ConnectorDef.metadata``.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -132,6 +134,39 @@ def _bq_param_type(value: Any) -> str:
     return "STRING"
 
 
+def _bigquery_client_from_credentials_env(
+    bigquery: Any, credentials_value: str, project: str | None
+) -> Any:
+    """Create a BigQuery client from a service-account JSON path or JSON string."""
+    source = credentials_value.strip()
+    # Handle case where value is wrapped in quotes
+    if (source.startswith('"') and source.endswith('"')) or (source.startswith("'") and source.endswith("'")):
+        source = source[1:-1].strip()
+
+    if source.startswith("{"):
+        try:
+            credentials_info = json.loads(source)
+        except json.JSONDecodeError as exc:
+            raise TBoxError("BigQuery credentials JSON string is invalid") from exc
+        if not isinstance(credentials_info, dict):
+            raise TBoxError("BigQuery credentials JSON string must decode to an object")
+        try:
+            from google.oauth2 import service_account
+        except ImportError as exc:  # pragma: no cover - google-auth ships with bigquery extra
+            raise TBoxError(
+                "google-auth is required for BigQuery service-account JSON credentials"
+            ) from exc
+        credentials = service_account.Credentials.from_service_account_info(credentials_info)
+        return bigquery.Client(
+            project=project or credentials_info.get("project_id"), credentials=credentials
+        )
+
+    credentials_path = Path(source).expanduser()
+    if not credentials_path.is_file():
+        raise TBoxError(f"BigQuery credentials file {source!r} does not exist")
+    return bigquery.Client.from_service_account_json(str(credentials_path), project=project)
+
+
 def _bigquery_executor(
     connector: ConnectorDef, sql: str, params: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -149,13 +184,13 @@ def _bigquery_executor(
     project = connector.metadata.get("project")
     credentials_ref = connector.metadata.get("credentials_ref")
     if credentials_ref:
-        credentials_path = os.environ.get(credentials_ref)
-        if not credentials_path:
+        credentials_value = os.environ.get(credentials_ref)
+        if not credentials_value:
             raise TBoxError(
                 f"Environment variable {credentials_ref!r} is not set "
                 f"(credentials_ref for connector {connector.name!r})"
             )
-        client = bigquery.Client.from_service_account_json(credentials_path, project=project)
+        client = _bigquery_client_from_credentials_env(bigquery, credentials_value, project)
     else:
         client = bigquery.Client(project=project)
 

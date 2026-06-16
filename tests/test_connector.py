@@ -10,6 +10,8 @@ from data_oop import (
     TBoxConflictError,
     TBoxNotFoundError,
 )
+from data_oop.exceptions import TBoxError
+from data_oop.rdb.connectors import _bigquery_client_from_credentials_env
 
 
 @pytest.fixture(scope="module")
@@ -53,6 +55,126 @@ def test_connector_dsn_ref_holds_env_name_not_secret(repo) -> None:
     # Only the env var NAME is persisted — nothing secret.
     repo.define_connector("prod_pg", dsn_ref="PROD_DB_DSN")
     assert repo.get_connector("prod_pg").dsn_ref == "PROD_DB_DSN"
+
+
+def test_bigquery_credentials_env_path_uses_service_account_file(tmp_path) -> None:
+    calls = {}
+
+    class FakeClient:
+        @classmethod
+        def from_service_account_json(cls, path, project=None):
+            calls["path"] = path
+            calls["project"] = project
+            return "client"
+
+    class FakeBigQuery:
+        Client = FakeClient
+
+    credentials_path = tmp_path / "service-account.json"
+    credentials_path.write_text("{}", encoding="utf-8")
+
+    assert (
+        _bigquery_client_from_credentials_env(
+            FakeBigQuery, str(credentials_path), project="my-project"
+        )
+        == "client"
+    )
+    assert calls == {"path": str(credentials_path), "project": "my-project"}
+
+
+def test_bigquery_credentials_env_json_string_uses_inline_info(monkeypatch) -> None:
+    import json
+    import sys
+    import types
+
+    calls = {}
+
+    class FakeCredentials:
+        @classmethod
+        def from_service_account_info(cls, info):
+            calls["info"] = info
+            return "credentials"
+
+    service_account_module = types.ModuleType("google.oauth2.service_account")
+    service_account_module.Credentials = FakeCredentials
+    oauth2_module = types.ModuleType("google.oauth2")
+    oauth2_module.service_account = service_account_module
+    google_module = types.ModuleType("google")
+    google_module.oauth2 = oauth2_module
+    monkeypatch.setitem(sys.modules, "google", google_module)
+    monkeypatch.setitem(sys.modules, "google.oauth2", oauth2_module)
+    monkeypatch.setitem(sys.modules, "google.oauth2.service_account", service_account_module)
+
+    class FakeClient:
+        def __init__(self, project=None, credentials=None):
+            calls["client"] = {"project": project, "credentials": credentials}
+
+    class FakeBigQuery:
+        Client = FakeClient
+
+    raw_credentials = json.dumps(
+        {"type": "service_account", "project_id": "json-project", "client_email": "x@y"}
+    )
+
+    client = _bigquery_client_from_credentials_env(FakeBigQuery, raw_credentials, project=None)
+
+    assert isinstance(client, FakeClient)
+    assert calls["info"]["project_id"] == "json-project"
+    assert calls["client"] == {"project": "json-project", "credentials": "credentials"}
+
+
+def test_bigquery_credentials_env_quoted_json_string(monkeypatch) -> None:
+    import json
+    import sys
+    import types
+
+    calls = {}
+
+    class FakeCredentials:
+        @classmethod
+        def from_service_account_info(cls, info):
+            calls["info"] = info
+            return "credentials"
+
+    service_account_module = types.ModuleType("google.oauth2.service_account")
+    service_account_module.Credentials = FakeCredentials
+    oauth2_module = types.ModuleType("google.oauth2")
+    oauth2_module.service_account = service_account_module
+    google_module = types.ModuleType("google")
+    google_module.oauth2 = oauth2_module
+    monkeypatch.setitem(sys.modules, "google", google_module)
+    monkeypatch.setitem(sys.modules, "google.oauth2", oauth2_module)
+    monkeypatch.setitem(sys.modules, "google.oauth2.service_account", service_account_module)
+
+    class FakeClient:
+        def __init__(self, project=None, credentials=None):
+            calls["client"] = {"project": project, "credentials": credentials}
+
+    class FakeBigQuery:
+        Client = FakeClient
+
+    # Wrapped in double quotes
+    raw_credentials_double = '"' + json.dumps(
+        {"type": "service_account", "project_id": "quoted-project-double", "client_email": "x@y"}
+    ) + '"'
+
+    client = _bigquery_client_from_credentials_env(FakeBigQuery, raw_credentials_double, project=None)
+    assert isinstance(client, FakeClient)
+    assert calls["info"]["project_id"] == "quoted-project-double"
+
+    # Wrapped in single quotes
+    raw_credentials_single = "'" + json.dumps(
+        {"type": "service_account", "project_id": "quoted-project-single", "client_email": "x@y"}
+    ) + "'"
+
+    client = _bigquery_client_from_credentials_env(FakeBigQuery, raw_credentials_single, project=None)
+    assert isinstance(client, FakeClient)
+    assert calls["info"]["project_id"] == "quoted-project-single"
+
+
+def test_bigquery_credentials_env_missing_json_file_raises() -> None:
+    with pytest.raises(TBoxError, match="does not exist"):
+        _bigquery_client_from_credentials_env(object(), "missing-service-account.json", None)
 
 
 def test_attach_and_get_source_binding(repo) -> None:
