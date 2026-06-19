@@ -244,7 +244,17 @@ class ValidationReport:
             raise TBoxValidationError(self)
 
 
-WorkflowAction = Literal["create_node", "create_relationship", "run_workflow", "fetch_view"]
+WorkflowAction = Literal[
+    "create_node",
+    "create_relationship",
+    "run_workflow",
+    "fetch_view",
+    "transform",
+    "abox_query",
+    "http_request",
+    "materialize_source",
+    "db_operation",
+]
 WorkflowParameterType = Literal[
     "string", "integer", "float", "boolean", "date", "datetime", "email", "url", "phone", "uuid", "array"
 ]
@@ -281,6 +291,26 @@ class WorkflowStepDef:
     # step's interpolated ``parameters`` become the view's filters.
     view_name: str | None = None
     parameters: dict[str, Any] = field(default_factory=dict)
+    # For action="transform": return ``value`` when set, otherwise return the
+    # interpolated ``parameters`` map. Useful for shaping rows between steps.
+    value: Any | None = None
+    # For action="abox_query": read-only Cypher query plus bind params in
+    # ``parameters``. Results are stored as {"rows": [...]}.
+    cypher: str | None = None
+    limit: int | None = None
+    timeout_ms: int | None = None
+    # For action="http_request": outbound HTTP request. ``parameters`` remains
+    # available for template interpolation; query/body/header maps get interpolated.
+    method: str | None = None
+    url: str | None = None
+    headers: dict[str, Any] = field(default_factory=dict)
+    query: dict[str, Any] = field(default_factory=dict)
+    body: Any | None = None
+    # For action="materialize_source": optional execution controls.
+    prune: bool = True
+    max_rows: int | None = None
+    # For action="db_operation": name of a code-registered DB operation.
+    operation_name: str | None = None
 
 
 @dataclass(frozen=True)

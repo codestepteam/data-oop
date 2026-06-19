@@ -806,3 +806,245 @@ def test_rollback_continues_on_individual_rollback_failure(falkor_graph, monkeyp
     uuids_rolled_back = {item.get("uuid") for item in rollback_calls}
     assert uuids_rolled_back == {"success_uuid", "fail_uuid"}
 
+
+def test_workflow_first_five_step_tools_validation_and_builder() -> None:
+    from data_oop import WorkflowBuilder
+    from data_oop.schema.models import WorkflowDef, WorkflowParameterDef, WorkflowStepDef
+    from data_oop.workflow.workflows import generate_workflow_dsl, validate_workflow
+
+    wf = WorkflowDef(
+        name="first_five_tools",
+        parameters=(WorkflowParameterDef(name="region", type="string"),),
+        steps=(
+            WorkflowStepDef(
+                step_id="fetch_sales",
+                action="fetch_view",
+                view_name="daily_sales",
+                parameters={"region": "{region}"},
+            ),
+            WorkflowStepDef(
+                step_id="shape",
+                action="transform",
+                parameters={"customer_id": "{fetch_sales.value.0.customer_id}"},
+            ),
+            WorkflowStepDef(
+                step_id="find_customer",
+                action="abox_query",
+                cypher="MATCH (c:Customer {customer_id: $customer_id}) RETURN c",
+                parameters={"customer_id": "{shape.customer_id}"},
+                limit=10,
+            ),
+            WorkflowStepDef(
+                step_id="call_api",
+                action="http_request",
+                method="POST",
+                url="https://api.example.com/customers/{shape.customer_id}",
+                body={"customer_id": "{shape.customer_id}"},
+            ),
+            WorkflowStepDef(
+                step_id="sync_customer",
+                action="materialize_source",
+                class_name="CustomerSnapshot",
+            ),
+        ),
+    )
+
+    validate_workflow(wf)
+    dsl = generate_workflow_dsl(wf)
+    assert "fetch_view(" in dsl
+    assert "transform(" in dsl
+    assert "abox_query(" in dsl
+    assert "http_request(" in dsl
+    assert "materialize_source(" in dsl
+
+    built = (
+        WorkflowBuilder("builder_five")
+        .parameter("region", type="string")
+        .fetch_view("fetch_sales", view_name="daily_sales", parameters={"region": "{region}"})
+        .transform("shape", parameters={"customer_id": "{fetch_sales.value.0.customer_id}"})
+        .abox_query(
+            "find_customer",
+            cypher="MATCH (c:Customer {customer_id: $customer_id}) RETURN c",
+            parameters={"customer_id": "{shape.customer_id}"},
+            limit=10,
+        )
+        .http_request(
+            "call_api",
+            method="POST",
+            url="https://api.example.com/customers/{shape.customer_id}",
+            body={"customer_id": "{shape.customer_id}"},
+        )
+        .materialize_source("sync_customer", class_name="CustomerSnapshot")
+        .build()
+    )
+    assert [step.action for step in built.steps] == [
+        "fetch_view",
+        "transform",
+        "abox_query",
+        "http_request",
+        "materialize_source",
+    ]
+
+
+def test_run_workflow_executes_first_five_step_tools(monkeypatch) -> None:
+    import json
+
+    from data_oop.schema.models import MaterializeResult
+    from data_oop.workflow.workflows import run_workflow
+    import data_oop.workflow.workflows as workflow_mod
+
+    steps = [
+        {
+            "step_id": "fetch_sales",
+            "action": "fetch_view",
+            "view_name": "daily_sales",
+            "parameters": {"region": "{region}"},
+        },
+        {
+            "step_id": "shape",
+            "action": "transform",
+            "parameters": {"customer_id": "{fetch_sales.value.0.customer_id}", "amount": "{fetch_sales.value.0.amount}"},
+        },
+        {
+            "step_id": "find_customer",
+            "action": "abox_query",
+            "cypher": "MATCH (c:Customer {customer_id: $customer_id}) RETURN c",
+            "parameters": {"customer_id": "{shape.customer_id}"},
+            "limit": 10,
+        },
+        {
+            "step_id": "call_api",
+            "action": "http_request",
+            "method": "POST",
+            "url": "https://api.example.com/customers/{shape.customer_id}",
+            "body": {"customer_id": "{shape.customer_id}", "tier": "{find_customer.rows.0.tier}"},
+        },
+        {
+            "step_id": "sync_customer",
+            "action": "materialize_source",
+            "class_name": "CustomerSnapshot",
+        },
+    ]
+    parameter_defs = [{"name": "region", "type": "string", "required": True}]
+
+    class FakeResult:
+        result_set = [[json.dumps(steps), json.dumps(parameter_defs)]]
+
+    class FakeGraph:
+        def query(self, cypher, params=None):
+            assert "WorkflowDefinition" in cypher
+            assert params == {"name": "five_tools"}
+            return FakeResult()
+
+    calls = {}
+
+    def fake_resolve_view(*, repo, graph, view_name, filters, use_cache=True):
+        calls["view"] = {"view_name": view_name, "filters": filters}
+        return [{"customer_id": "C-1", "amount": 42}]
+
+    def fake_abox_query(graph, cypher, *, limit=100, params=None, timeout_ms=None):
+        calls["abox"] = {"cypher": cypher, "limit": limit, "params": params, "timeout_ms": timeout_ms}
+        return [{"uuid": "node-1", "tier": "gold"}]
+
+    def fake_http_request(*, method, url, headers=None, query=None, body=None, timeout_ms=None):
+        calls["http"] = {"method": method, "url": url, "headers": headers, "query": query, "body": body, "timeout_ms": timeout_ms}
+        return {"status": 200, "headers": {}, "json": {"ok": True}, "text": '{"ok": true}'}
+
+    def fake_materialize_source(*, repo, graph, class_name, prune=True, max_rows=100000):
+        calls["sync"] = {"class_name": class_name, "prune": prune, "max_rows": max_rows}
+        return MaterializeResult(
+            class_name=class_name,
+            connector_name="warehouse",
+            rows_fetched=2,
+            nodes_upserted=2,
+            nodes_pruned=1,
+            synced_at="2026-06-17T00:00:00+00:00",
+        )
+
+    monkeypatch.setattr(workflow_mod, "resolve_view", fake_resolve_view)
+    monkeypatch.setattr(workflow_mod, "abox_query", fake_abox_query)
+    monkeypatch.setattr(workflow_mod, "_execute_http_request", fake_http_request)
+    monkeypatch.setattr(workflow_mod, "materialize_source", fake_materialize_source)
+
+    results = run_workflow(graph=FakeGraph(), name="five_tools", parameters={"region": "KR"})
+
+    assert calls["view"] == {"view_name": "daily_sales", "filters": {"region": "KR"}}
+    assert results["shape"] == {"customer_id": "C-1", "amount": 42}
+    assert calls["abox"]["params"] == {"customer_id": "C-1"}
+    assert results["find_customer"]["rows"] == [{"uuid": "node-1", "tier": "gold"}]
+    assert calls["http"]["body"] == {"customer_id": "C-1", "tier": "gold"}
+    assert results["call_api"]["status"] == 200
+    assert calls["sync"] == {"class_name": "CustomerSnapshot", "prune": True, "max_rows": 100000}
+    assert results["sync_customer"]["rows_fetched"] == 2
+
+
+def test_named_db_operation_registry_and_workflow() -> None:
+    import json
+
+    from data_oop import WorkflowBuilder, execute_db_operation, register_db_operation, run_workflow, list_db_operations
+    from data_oop.schema.models import WorkflowDef, WorkflowParameterDef, WorkflowStepDef
+    from data_oop.workflow.workflows import generate_workflow_dsl, validate_workflow
+
+    operation_name = "tests.lookup_customer_status"
+    calls = []
+
+    def lookup_customer_status(*, repo, graph, parameters):
+        calls.append({"repo": repo, "graph": graph, "parameters": parameters})
+        return {"customer_id": parameters["customer_id"], "status": "active"}
+
+    register_db_operation(operation_name, lookup_customer_status)
+    assert operation_name in list_db_operations()
+    assert execute_db_operation(name=operation_name, repo=None, graph=None, parameters={"customer_id": "C-0"}) == {
+        "customer_id": "C-0",
+        "status": "active",
+    }
+
+    wf = WorkflowDef(
+        name="named_operation_validation",
+        parameters=(WorkflowParameterDef(name="customer_id", type="string"),),
+        steps=(
+            WorkflowStepDef(
+                step_id="lookup",
+                action="db_operation",
+                operation_name=operation_name,
+                parameters={"customer_id": "{customer_id}"},
+            ),
+        ),
+    )
+    validate_workflow(wf)
+    assert "db_operation(" in generate_workflow_dsl(wf)
+
+    built = (
+        WorkflowBuilder("named_operation_builder")
+        .parameter("customer_id", type="string")
+        .db_operation("lookup", operation_name=operation_name, parameters={"customer_id": "{customer_id}"})
+        .build()
+    )
+    assert built.steps[0].action == "db_operation"
+    assert built.steps[0].operation_name == operation_name
+
+    class FakeResult:
+        result_set = [[
+            json.dumps([
+                {
+                    "step_id": "lookup",
+                    "action": "db_operation",
+                    "operation_name": operation_name,
+                    "parameters": {"customer_id": "{customer_id}"},
+                }
+            ]),
+            json.dumps([{"name": "customer_id", "type": "string", "required": True}]),
+        ]]
+
+    class FakeGraph:
+        def query(self, cypher, params=None):
+            assert "WorkflowDefinition" in cypher
+            assert params == {"name": "named_operation_workflow"}
+            return FakeResult()
+
+    graph = FakeGraph()
+    results = run_workflow(graph=graph, name="named_operation_workflow", parameters={"customer_id": "C-1"})
+    assert results["lookup"] == {"customer_id": "C-1", "status": "active"}
+    assert calls[-1]["graph"] is graph
+    assert calls[-1]["parameters"] == {"customer_id": "C-1"}
+

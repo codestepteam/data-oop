@@ -6,6 +6,7 @@ Public API (import from ``data_oop``), grouped by area:
 - **On-demand views** — ``resolve_view`` (live RDB table, Redis-cached), ``connect_and_resolve_view``.
 - **ABox write** — ``upsert_abox_node`` / ``upsert_abox_relationship`` / ``delete_abox_element`` / ``clear_abox_nodes`` (+ ``connect_and_*``).
 - **RDB sync** — ``materialize_source`` (+ ``connect_and_*``); executor registry ``register_executor`` / ``get_executor`` / ``fetch_rows``.
+- **Named DB operations** — ``register_db_operation`` / ``execute_db_operation`` for curated workflow DB work.
 - **Workflow / triggers** — ``save_workflow`` / ``run_workflow``; ``analyze_trigger_graph`` / ``validate_trigger_graph`` / ``dispatch_triggers``.
 - **Validation** — ``run_latest_falkor_abox_validation`` (+ ``connect_and_*``), ``store_latest_validation_report``.
 - **TBox load / dump** — ``load_tbox_to_falkor`` (+ ``connect_and_*``), ``dump_graph_to_file`` / ``restore_graph_from_file``.
@@ -60,6 +61,12 @@ from data_oop.falkor.validation import (
     store_latest_validation_report,
 )
 from data_oop.rdb.connectors import fetch_rows, get_executor, register_executor
+from data_oop.rdb.operations import (
+    execute_db_operation,
+    get_db_operation,
+    list_db_operations,
+    register_db_operation,
+)
 from data_oop.rdb.sync import (
     connect_and_materialize_source,
     materialize_source,
@@ -124,6 +131,7 @@ _API_GROUPS = (
     ("falkor.abox", "ABox write — nodes & relationships"),
     ("rdb.sync", "RDB source sync (materialized)"),
     ("rdb.connectors", "RDB executor registry"),
+    ("rdb.operations", "Named DB operations"),
     ("workflow.workflows", "Workflows"),
     ("workflow.triggers", "Triggers"),
     ("falkor.validation", "Validation"),
@@ -209,6 +217,10 @@ __all__ = [
     "register_executor",
     "get_executor",
     "fetch_rows",
+    "register_db_operation",
+    "list_db_operations",
+    "get_db_operation",
+    "execute_db_operation",
     "ConstraintDef",
     "EffectiveClassSchema",
     "EffectivePropertyDef",

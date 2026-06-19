@@ -1,11 +1,13 @@
 import { Search, Trash } from "lucide-react";
-import type { TBoxClass, TBoxRelationship, Workflow, WorkflowParameter, WorkflowStep } from "../../types";
+import type { SourceBinding, TBoxClass, TBoxRelationship, ViewDef, Workflow, WorkflowParameter, WorkflowStep } from "../../types";
 
 interface StepConfiguratorProps {
   step: WorkflowStep;
   idx: number;
   classes: TBoxClass[];
   relationships: TBoxRelationship[];
+  views: ViewDef[];
+  sourceBindings: SourceBinding[];
   workflows: Workflow[];
   editorName: string;
   editorParameters: WorkflowParameter[];
@@ -24,6 +26,8 @@ export function StepConfigurator({
   idx,
   classes,
   relationships,
+  views,
+  sourceBindings,
   workflows,
   editorName,
   editorParameters,
@@ -35,6 +39,17 @@ export function StepConfigurator({
   onDeselect,
   openNodeSelector,
 }: StepConfiguratorProps) {
+  const selectedView = views.find(v => v.name === step.view_name);
+  const sourceClassNames = Array.from(new Set(sourceBindings.map(b => b.class_name)));
+  const jsonString = (value: unknown, fallback: unknown = {}) => JSON.stringify(value ?? fallback, null, 2);
+  const updateJsonField = (field: keyof WorkflowStep, raw: string, fallback: unknown = {}) => {
+    try {
+      onUpdateStep(idx, { [field]: raw.trim() ? JSON.parse(raw) : fallback });
+    } catch (err) {
+      console.warn(`Invalid JSON for ${String(field)}`, err);
+    }
+  };
+
   return (
     <div className="border border-slate-200 rounded-xl p-4 bg-slate-50 space-y-4 relative">
       <button
@@ -561,6 +576,213 @@ export function StepConfigurator({
               </div>
             );
           })()}
+        </div>
+      )}
+
+      {/* Fetch View Step Builder */}
+      {step.action === "fetch_view" && (
+        <div className="space-y-3 text-xs">
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase">View</label>
+            <select
+              className="w-full mt-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:border-indigo-500 font-mono"
+              value={step.view_name || ""}
+              onChange={(e) => onUpdateStep(idx, { view_name: e.target.value, parameters: {} })}
+            >
+              <option value="">-- Select View --</option>
+              {views.map(v => <option key={v.name} value={v.name}>{v.name}</option>)}
+            </select>
+          </div>
+          {selectedView && (
+            <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-3">
+              <span className="block text-[10px] font-bold text-slate-400 uppercase">Filters</span>
+              {selectedView.params.length === 0 && <div className="text-[10px] text-slate-400 italic">No filters.</div>}
+              {selectedView.params.map(param => (
+                <div key={param.name}>
+                  <label className="block text-[10px] font-semibold text-slate-500 font-mono">
+                    {param.name} {param.required && <span className="text-rose-500">*</span>}
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full mt-1 px-2.5 py-1 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500 font-mono"
+                    value={step.parameters?.[param.name] || ""}
+                    onChange={(e) => onUpdateStep(idx, { parameters: { ...step.parameters, [param.name]: e.target.value } })}
+                    placeholder="literal or {var}"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Transform Step Builder */}
+      {step.action === "transform" && (
+        <div className="space-y-3 text-xs">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase">Output Parameters JSON</label>
+          <textarea
+            key={`transform-${step.step_id}`}
+            className="w-full h-32 px-2.5 py-2 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500 font-mono"
+            defaultValue={jsonString(step.parameters)}
+            onBlur={(e) => updateJsonField("parameters", e.target.value, {})}
+            placeholder={'{"customer_id": "{fetch_sales.value.0.customer_id}"}'}
+          />
+        </div>
+      )}
+
+      {/* ABox Query Step Builder */}
+      {step.action === "abox_query" && (
+        <div className="space-y-3 text-xs">
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase">Read-only Cypher</label>
+            <textarea
+              className="w-full h-28 mt-1 px-2.5 py-2 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500 font-mono"
+              value={step.cypher || ""}
+              onChange={(e) => onUpdateStep(idx, { cypher: e.target.value })}
+              placeholder="MATCH (n:Customer {uuid: $uuid}) RETURN n"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase">Limit</label>
+              <input
+                type="number"
+                className="w-full mt-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500"
+                value={step.limit ?? 100}
+                onChange={(e) => onUpdateStep(idx, { limit: Number(e.target.value) || 100 })}
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase">Timeout ms</label>
+              <input
+                type="number"
+                className="w-full mt-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500"
+                value={step.timeout_ms ?? ""}
+                onChange={(e) => onUpdateStep(idx, { timeout_ms: e.target.value ? Number(e.target.value) : undefined })}
+              />
+            </div>
+          </div>
+          <label className="block text-[10px] font-bold text-slate-400 uppercase">Params JSON</label>
+          <textarea
+            key={`abox-${step.step_id}`}
+            className="w-full h-24 px-2.5 py-2 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500 font-mono"
+            defaultValue={jsonString(step.parameters)}
+            onBlur={(e) => updateJsonField("parameters", e.target.value, {})}
+            placeholder={'{"uuid": "{customer_uuid}"}'}
+          />
+        </div>
+      )}
+
+      {/* HTTP Request Step Builder */}
+      {step.action === "http_request" && (
+        <div className="space-y-3 text-xs">
+          <div className="grid grid-cols-4 gap-3">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase">Method</label>
+              <select
+                className="w-full mt-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:border-indigo-500"
+                value={step.method || "GET"}
+                onChange={(e) => onUpdateStep(idx, { method: e.target.value })}
+              >
+                {["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"].map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div className="col-span-3">
+              <label className="block text-[10px] font-bold text-slate-400 uppercase">URL</label>
+              <input
+                type="text"
+                className="w-full mt-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500 font-mono"
+                value={step.url || ""}
+                onChange={(e) => onUpdateStep(idx, { url: e.target.value })}
+                placeholder="https://api.example.com/{id}"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase">Headers JSON</label>
+              <textarea key={`headers-${step.step_id}`} className="w-full h-24 mt-1 px-2.5 py-2 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500 font-mono" defaultValue={jsonString(step.headers)} onBlur={(e) => updateJsonField("headers", e.target.value, {})} />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase">Query JSON</label>
+              <textarea key={`query-${step.step_id}`} className="w-full h-24 mt-1 px-2.5 py-2 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500 font-mono" defaultValue={jsonString(step.query)} onBlur={(e) => updateJsonField("query", e.target.value, {})} />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase">Body JSON</label>
+              <textarea key={`body-${step.step_id}`} className="w-full h-24 mt-1 px-2.5 py-2 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500 font-mono" defaultValue={jsonString(step.body, null)} onBlur={(e) => updateJsonField("body", e.target.value, undefined)} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase">Timeout ms</label>
+            <input
+              type="number"
+              className="w-40 mt-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500"
+              value={step.timeout_ms ?? 30000}
+              onChange={(e) => onUpdateStep(idx, { timeout_ms: Number(e.target.value) || 30000 })}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Materialize Source Step Builder */}
+      {step.action === "materialize_source" && (
+        <div className="space-y-3 text-xs">
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase">Source-backed Class</label>
+            <select
+              className="w-full mt-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:border-indigo-500 font-mono"
+              value={step.class_name || ""}
+              onChange={(e) => onUpdateStep(idx, { class_name: e.target.value })}
+            >
+              <option value="">-- Select Class --</option>
+              {(sourceClassNames.length ? sourceClassNames : classes.map(c => c.name)).map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </div>
+          <label className="flex items-center space-x-2 text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={step.prune ?? true}
+              onChange={(e) => onUpdateStep(idx, { prune: e.target.checked })}
+            />
+            <span>Prune previous materialized nodes before sync</span>
+          </label>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase">Max Rows</label>
+            <input
+              type="number"
+              className="w-40 mt-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500"
+              value={step.max_rows ?? ""}
+              onChange={(e) => onUpdateStep(idx, { max_rows: e.target.value ? Number(e.target.value) : undefined })}
+              placeholder="100000"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Named DB Operation Step Builder */}
+      {step.action === "db_operation" && (
+        <div className="space-y-3 text-xs">
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase">Operation Name</label>
+            <input
+              type="text"
+              className="w-full mt-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500 font-mono"
+              value={step.operation_name || ""}
+              onChange={(e) => onUpdateStep(idx, { operation_name: e.target.value })}
+              placeholder="e.g. billing.mark_paid_month"
+            />
+            <p className="mt-1 text-[10px] text-slate-400">
+              Executes code-registered operation only. Raw SQL not stored in workflow.
+            </p>
+          </div>
+          <label className="block text-[10px] font-bold text-slate-400 uppercase">Parameters JSON</label>
+          <textarea
+            key={`db-operation-${step.step_id}`}
+            className="w-full h-32 px-2.5 py-2 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-indigo-500 font-mono"
+            defaultValue={jsonString(step.parameters)}
+            onBlur={(e) => updateJsonField("parameters", e.target.value, {})}
+            placeholder={'{"customer_id": "{customer_id}"}'}
+          />
         </div>
       )}
     </div>

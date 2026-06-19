@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect } from "react";
 import { apiFetch } from "../api";
-import type { Workflow, WorkflowStep, WorkflowParameter, TBoxClass, TBoxRelationship, RunResult } from "../types";
+import type { Workflow, WorkflowAction, WorkflowStep, WorkflowParameter, TBoxClass, TBoxRelationship, RunResult, SourceBinding, ViewDef } from "../types";
 
-export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRelationship[] }, onWorkflowRunSuccess?: () => void) {
+export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRelationship[]; views?: ViewDef[]; source_bindings?: SourceBinding[] }, onWorkflowRunSuccess?: () => void) {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loadingWorkflows, setLoadingWorkflows] = useState(false);
   const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
@@ -103,7 +103,7 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
     }
   }, []);
 
-  const addStep = useCallback((action: "create_node" | "create_relationship" | "run_workflow") => {
+  const addStep = useCallback((action: WorkflowAction) => {
     const stepId = `step_${editorSteps.length + 1}`;
     if (action === "create_node") {
       setEditorSteps(steps => [
@@ -128,13 +128,78 @@ export function useWorkflow(tbox: { classes: TBoxClass[]; relationships: TBoxRel
           to_uuid: "",
         },
       ]);
-    } else {
+    } else if (action === "run_workflow") {
       setEditorSteps(steps => [
         ...steps,
         {
           step_id: stepId,
           action: "run_workflow",
           workflow_name: "",
+          parameters: {},
+        },
+      ]);
+    } else if (action === "fetch_view") {
+      const view = tbox.views?.[0];
+      setEditorSteps(steps => [
+        ...steps,
+        {
+          step_id: stepId,
+          action: "fetch_view",
+          view_name: view?.name || "",
+          parameters: {},
+        },
+      ]);
+    } else if (action === "transform") {
+      setEditorSteps(steps => [
+        ...steps,
+        {
+          step_id: stepId,
+          action: "transform",
+          parameters: {},
+        },
+      ]);
+    } else if (action === "abox_query") {
+      setEditorSteps(steps => [
+        ...steps,
+        {
+          step_id: stepId,
+          action: "abox_query",
+          cypher: "MATCH (n) RETURN n LIMIT 10",
+          parameters: {},
+          limit: 100,
+        },
+      ]);
+    } else if (action === "http_request") {
+      setEditorSteps(steps => [
+        ...steps,
+        {
+          step_id: stepId,
+          action: "http_request",
+          method: "GET",
+          url: "https://example.com",
+          headers: {},
+          query: {},
+          timeout_ms: 30000,
+        },
+      ]);
+    } else if (action === "materialize_source") {
+      const binding = tbox.source_bindings?.[0];
+      setEditorSteps(steps => [
+        ...steps,
+        {
+          step_id: stepId,
+          action: "materialize_source",
+          class_name: binding?.class_name || tbox.classes[0]?.name || "",
+          prune: true,
+        },
+      ]);
+    } else if (action === "db_operation") {
+      setEditorSteps(steps => [
+        ...steps,
+        {
+          step_id: stepId,
+          action: "db_operation",
+          operation_name: "",
           parameters: {},
         },
       ]);

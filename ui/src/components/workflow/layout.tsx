@@ -107,6 +107,24 @@ export function buildFlowNodes(
     } else if (step.action === "run_workflow") {
       subtitle = `Sub-Workflow: ${step.workflow_name || "(empty)"}`;
       bg = isSelected ? "bg-emerald-50 border-emerald-500 text-emerald-900 border-2" : "bg-white border-slate-300 text-slate-800";
+    } else if (step.action === "fetch_view") {
+      subtitle = `Fetch View: ${step.view_name || "(empty)"}`;
+      bg = isSelected ? "bg-sky-50 border-sky-500 text-sky-900 border-2" : "bg-white border-slate-300 text-slate-800";
+    } else if (step.action === "transform") {
+      subtitle = "Transform data";
+      bg = isSelected ? "bg-violet-50 border-violet-500 text-violet-900 border-2" : "bg-white border-slate-300 text-slate-800";
+    } else if (step.action === "abox_query") {
+      subtitle = "Read-only ABox query";
+      bg = isSelected ? "bg-cyan-50 border-cyan-500 text-cyan-900 border-2" : "bg-white border-slate-300 text-slate-800";
+    } else if (step.action === "http_request") {
+      subtitle = `${step.method || "GET"}: ${step.url || "(empty)"}`;
+      bg = isSelected ? "bg-rose-50 border-rose-500 text-rose-900 border-2" : "bg-white border-slate-300 text-slate-800";
+    } else if (step.action === "materialize_source") {
+      subtitle = `Materialize: ${step.class_name || "(empty)"}`;
+      bg = isSelected ? "bg-lime-50 border-lime-500 text-lime-900 border-2" : "bg-white border-slate-300 text-slate-800";
+    } else if (step.action === "db_operation") {
+      subtitle = `DB Operation: ${step.operation_name || "(empty)"}`;
+      bg = isSelected ? "bg-orange-50 border-orange-500 text-orange-900 border-2" : "bg-white border-slate-300 text-slate-800";
     }
 
     return {

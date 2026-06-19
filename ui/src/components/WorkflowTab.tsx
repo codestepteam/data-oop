@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { Plus, Save, Settings } from "lucide-react";
 import "@xyflow/react/dist/style.css";
-import type { Workflow, WorkflowStep, WorkflowParameter, TBoxClass, TBoxRelationship, RunResult } from "../types";
+import type { Workflow, WorkflowAction, WorkflowStep, WorkflowParameter, TBoxClass, TBoxRelationship, RunResult, SourceBinding, ViewDef } from "../types";
 import { buildFlowEdges, buildFlowNodes, computeStepPositions } from "./workflow/layout";
 import { WorkflowList } from "./workflow/WorkflowList";
 import { RunPanel } from "./workflow/RunPanel";
@@ -14,6 +14,8 @@ interface WorkflowTabProps {
   tbox: {
     classes: TBoxClass[];
     relationships: TBoxRelationship[];
+    views?: ViewDef[];
+    source_bindings?: SourceBinding[];
   };
   workflows: Workflow[];
   loadingWorkflows: boolean;
@@ -28,7 +30,7 @@ interface WorkflowTabProps {
   setRunParams: (v: Record<string, string>) => void;
   runResult: RunResult | null;
   running: boolean;
-  onAddStep: (action: "create_node" | "create_relationship" | "run_workflow") => void;
+  onAddStep: (action: WorkflowAction) => void;
   onRemoveStep: (idx: number) => void;
   onUpdateStep: (idx: number, fields: Partial<WorkflowStep>) => void;
   onAddParameter: (p: WorkflowParameter) => boolean;
@@ -97,7 +99,7 @@ export function WorkflowTab({
 
   const activeStep = activeStepIdx !== null ? editorSteps[activeStepIdx] : undefined;
 
-  const handleAddStep = (action: "create_node" | "create_relationship" | "run_workflow") => {
+  const handleAddStep = (action: WorkflowAction) => {
     onAddStep(action);
     setActiveStepIdx(editorSteps.length);
   };
@@ -211,6 +213,8 @@ export function WorkflowTab({
                 idx={activeStepIdx}
                 classes={tbox.classes}
                 relationships={tbox.relationships}
+                views={tbox.views || []}
+                sourceBindings={tbox.source_bindings || []}
                 workflows={workflows}
                 editorName={editorName}
                 editorParameters={editorParameters}
@@ -233,27 +237,69 @@ export function WorkflowTab({
             )}
           </div>
 
-          <div className="flex space-x-2 pt-4 border-t border-slate-100">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-4 border-t border-slate-100">
             <button
               onClick={() => handleAddStep("create_node")}
-              className="flex-1 flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+              className="flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
             >
               <Plus className="h-4 w-4 text-indigo-500" />
-              <span>Add Node Step</span>
+              <span>Add Node</span>
             </button>
             <button
               onClick={() => handleAddStep("create_relationship")}
-              className="flex-1 flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+              className="flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
             >
               <Plus className="h-4 w-4 text-amber-500" />
-              <span>Add Link Step</span>
+              <span>Add Link</span>
             </button>
             <button
               onClick={() => handleAddStep("run_workflow")}
-              className="flex-1 flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+              className="flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
             >
               <Plus className="h-4 w-4 text-emerald-500" />
-              <span>Add Sub-Workflow</span>
+              <span>Sub-Workflow</span>
+            </button>
+            <button
+              onClick={() => handleAddStep("fetch_view")}
+              className="flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+            >
+              <Plus className="h-4 w-4 text-sky-500" />
+              <span>Fetch View</span>
+            </button>
+            <button
+              onClick={() => handleAddStep("transform")}
+              className="flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+            >
+              <Plus className="h-4 w-4 text-violet-500" />
+              <span>Transform</span>
+            </button>
+            <button
+              onClick={() => handleAddStep("abox_query")}
+              className="flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+            >
+              <Plus className="h-4 w-4 text-cyan-500" />
+              <span>ABox Query</span>
+            </button>
+            <button
+              onClick={() => handleAddStep("http_request")}
+              className="flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+            >
+              <Plus className="h-4 w-4 text-rose-500" />
+              <span>HTTP</span>
+            </button>
+            <button
+              onClick={() => handleAddStep("materialize_source")}
+              className="flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+            >
+              <Plus className="h-4 w-4 text-lime-500" />
+              <span>Materialize</span>
+            </button>
+            <button
+              onClick={() => handleAddStep("db_operation")}
+              className="flex items-center justify-center space-x-1.5 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+            >
+              <Plus className="h-4 w-4 text-orange-500" />
+              <span>DB Operation</span>
             </button>
           </div>
         </div>

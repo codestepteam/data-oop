@@ -4,9 +4,12 @@ import json
 import math
 import re
 import uuid
+from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlparse
+from urllib.request import Request, urlopen
 
 from data_oop.falkor.graph import FalkorGraph
 from data_oop.falkor.abox import (
@@ -16,10 +19,15 @@ from data_oop.falkor.abox import (
     upsert_abox_relationship,
 )
 from data_oop.schema.models import WorkflowDef, WorkflowStepDef, WorkflowParameterDef
+from data_oop.falkor.query import abox_query
+from data_oop.rdb.operations import execute_db_operation
+from data_oop.rdb.sync import materialize_source
+from data_oop.rdb.views import resolve_view
 
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _PHONE_RE = re.compile(r"^\+?[0-9][0-9\-\s().]{6,}$")
+_TEMPLATE_RE = re.compile(r"\{([A-Za-z_]\w*(?:\.(?:[A-Za-z_]\w*|\d+))*)\}")
 _TRUE_VALUES = {"true", "1", "yes", "y", "on"}
 _FALSE_VALUES = {"false", "0", "no", "n", "off"}
 
@@ -201,7 +209,17 @@ def validate_workflow(workflow: WorkflowDef) -> None:
 
     # 2. Check actions and required fields
     for step in workflow.steps:
-        if step.action not in ("create_node", "create_relationship", "run_workflow", "fetch_view"):
+        if step.action not in (
+            "create_node",
+            "create_relationship",
+            "run_workflow",
+            "fetch_view",
+            "transform",
+            "abox_query",
+            "http_request",
+            "materialize_source",
+            "db_operation",
+        ):
             raise ValueError(f"Unsupported action: {step.action} in step {step.step_id}")
 
         if step.action == "create_node":
@@ -219,6 +237,21 @@ def validate_workflow(workflow: WorkflowDef) -> None:
         elif step.action == "fetch_view":
             if not step.view_name:
                 raise ValueError(f"Step {step.step_id} (fetch_view) is missing view_name")
+        elif step.action == "transform":
+            if step.value is None and not step.parameters:
+                raise ValueError(f"Step {step.step_id} (transform) is missing value or parameters")
+        elif step.action == "abox_query":
+            if not step.cypher:
+                raise ValueError(f"Step {step.step_id} (abox_query) is missing cypher")
+        elif step.action == "http_request":
+            if not step.method or not step.url:
+                raise ValueError(f"Step {step.step_id} (http_request) is missing method or url")
+        elif step.action == "materialize_source":
+            if not step.class_name:
+                raise ValueError(f"Step {step.step_id} (materialize_source) is missing class_name")
+        elif step.action == "db_operation":
+            if not step.operation_name:
+                raise ValueError(f"Step {step.step_id} (db_operation) is missing operation_name")
 
     # 3. Check variable interpolations
     # Collect all valid parameter names
@@ -244,12 +277,20 @@ def validate_workflow(workflow: WorkflowDef) -> None:
 
         collect_strings(step.properties)
         collect_strings(step.parameters)
+        collect_strings(step.value)
+        collect_strings(step.headers)
+        collect_strings(step.query)
+        collect_strings(step.body)
         if step.uuid:
             strings_to_check.append(step.uuid)
         if step.from_uuid:
             strings_to_check.append(step.from_uuid)
         if step.to_uuid:
             strings_to_check.append(step.to_uuid)
+        if step.cypher:
+            strings_to_check.append(step.cypher)
+        if step.url:
+            strings_to_check.append(step.url)
             
         if step.if_present:
             strings_to_check.append(f"{{{step.if_present}}}")
@@ -258,7 +299,7 @@ def validate_workflow(workflow: WorkflowDef) -> None:
 
         # Search for {variable_name} pattern
         for s in strings_to_check:
-            matches = re.findall(r"\{([^}]+)\}", s)
+            matches = _TEMPLATE_RE.findall(s)
             for path in matches:
                 root_key = path.split(".")[0]
                 is_valid = (
@@ -308,17 +349,25 @@ def extract_parameters_from_steps(
 
         collect_strings(step.get("properties", {}))
         collect_strings(step.get("parameters", {}))
+        collect_strings(step.get("value"))
+        collect_strings(step.get("headers", {}))
+        collect_strings(step.get("query", {}))
+        collect_strings(step.get("body"))
         if step.get("uuid"):
             strings_to_check.append(step["uuid"])
         if step.get("from_uuid"):
             strings_to_check.append(step["from_uuid"])
         if step.get("to_uuid"):
             strings_to_check.append(step["to_uuid"])
+        if step.get("cypher"):
+            strings_to_check.append(step["cypher"])
+        if step.get("url"):
+            strings_to_check.append(step["url"])
         if step.get("if_present"):
             strings_to_check.append(f"{{{step['if_present']}}}")
             
         for s in strings_to_check:
-            matches = re.findall(r"\{([^}]+)\}", s)
+            matches = _TEMPLATE_RE.findall(s)
             for path in matches:
                 root_key = path.split(".")[0]
                 if root_key not in step_ids and (not loop_over or root_key != loop_var):
@@ -349,6 +398,11 @@ def extract_parameters_from_steps(
             "description": f"Auto-extracted parameter {name}"
         })
     return params
+
+
+def _dsl_repr(value: Any) -> str:
+    """Return a Python literal suitable for generated WorkflowBuilder snippets."""
+    return repr(value)
 
 
 def generate_workflow_dsl(workflow: WorkflowDef) -> str:
@@ -429,6 +483,71 @@ def generate_workflow_dsl(workflow: WorkflowDef) -> str:
                     code_str += f"            \"{k}\": \"{val_escaped}\",\n"
                 code_str += "        }"
 
+        elif step.action == "fetch_view":
+            code_str += (
+                "    .fetch_view(\n"
+                f"        step_id=\"{step.step_id}\",\n"
+                f"        view_name=\"{step.view_name}\""
+            )
+            if step.parameters:
+                code_str += f",\n        parameters={_dsl_repr(step.parameters)}"
+
+        elif step.action == "transform":
+            code_str += "    .transform(\n" f"        step_id=\"{step.step_id}\""
+            if step.parameters:
+                code_str += f",\n        parameters={_dsl_repr(step.parameters)}"
+            if step.value is not None:
+                code_str += f",\n        value={_dsl_repr(step.value)}"
+
+        elif step.action == "abox_query":
+            code_str += (
+                "    .abox_query(\n"
+                f"        step_id=\"{step.step_id}\",\n"
+                f"        cypher={_dsl_repr(step.cypher)}"
+            )
+            if step.parameters:
+                code_str += f",\n        parameters={_dsl_repr(step.parameters)}"
+            if step.limit is not None:
+                code_str += f",\n        limit={step.limit}"
+            if step.timeout_ms is not None:
+                code_str += f",\n        timeout_ms={step.timeout_ms}"
+
+        elif step.action == "http_request":
+            code_str += (
+                "    .http_request(\n"
+                f"        step_id=\"{step.step_id}\",\n"
+                f"        method=\"{step.method}\",\n"
+                f"        url={_dsl_repr(step.url)}"
+            )
+            if step.headers:
+                code_str += f",\n        headers={_dsl_repr(step.headers)}"
+            if step.query:
+                code_str += f",\n        query={_dsl_repr(step.query)}"
+            if step.body is not None:
+                code_str += f",\n        body={_dsl_repr(step.body)}"
+            if step.timeout_ms is not None:
+                code_str += f",\n        timeout_ms={step.timeout_ms}"
+
+        elif step.action == "materialize_source":
+            code_str += (
+                "    .materialize_source(\n"
+                f"        step_id=\"{step.step_id}\",\n"
+                f"        class_name=\"{step.class_name}\""
+            )
+            if step.prune is False:
+                code_str += ",\n        prune=False"
+            if step.max_rows is not None:
+                code_str += f",\n        max_rows={step.max_rows}"
+
+        elif step.action == "db_operation":
+            code_str += (
+                "    .db_operation(\n"
+                f"        step_id=\"{step.step_id}\",\n"
+                f"        operation_name={_dsl_repr(step.operation_name)}"
+            )
+            if step.parameters:
+                code_str += f",\n        parameters={_dsl_repr(step.parameters)}"
+
         if step.if_present:
             code_str += f",\n        if_present=\"{step.if_present}\""
         if step.loop_over:
@@ -500,6 +619,18 @@ def save_workflow(
                 workflow_name=step.get("workflow_name"),
                 view_name=step.get("view_name"),
                 parameters=step.get("parameters") or {},
+                value=step.get("value"),
+                cypher=step.get("cypher"),
+                limit=step.get("limit"),
+                timeout_ms=step.get("timeout_ms"),
+                method=step.get("method"),
+                url=step.get("url"),
+                headers=step.get("headers") or {},
+                query=step.get("query") or {},
+                body=step.get("body"),
+                prune=step.get("prune", True),
+                max_rows=step.get("max_rows"),
+                operation_name=step.get("operation_name"),
             ))
         else:
             step_defs.append(step)
@@ -708,10 +839,8 @@ def run_workflow(
                     # Read-only: resolve a stored view live and hand its rows to later
                     # steps as {step_id: {"value": [...]}}. No graph mutation, so nothing
                     # is pushed onto the rollback stack. The step's interpolated
-                    # ``parameters`` (already resolved against the node context above)
-                    # become the view's filters.
+                    # ``parameters`` become the view's filters.
                     from data_oop.falkor.repository import FalkorTBoxRepository
-                    from data_oop.rdb.views import resolve_view
 
                     view_name = interpolated.get("view_name")
                     if not view_name:
@@ -724,6 +853,65 @@ def run_workflow(
                         filters=view_filters,
                     )
                     return {"value": value}
+
+                elif action == "transform":
+                    if "value" in interpolated and interpolated.get("value") is not None:
+                        return _serialize_workflow_value(interpolated.get("value"))
+                    if interpolated.get("parameters"):
+                        return _serialize_workflow_value(interpolated.get("parameters") or {})
+                    return _serialize_workflow_value(interpolated.get("properties") or {})
+
+                elif action == "abox_query":
+                    cypher = interpolated.get("cypher")
+                    if not cypher:
+                        raise ValueError(f"Missing cypher for abox_query step: {step_id}")
+                    rows = abox_query(
+                        graph,
+                        cypher,
+                        limit=interpolated.get("limit") or 100,
+                        params=interpolated.get("parameters") or {},
+                        timeout_ms=interpolated.get("timeout_ms"),
+                    )
+                    return {"rows": rows}
+
+                elif action == "http_request":
+                    return _execute_http_request(
+                        method=interpolated.get("method"),
+                        url=interpolated.get("url"),
+                        headers=interpolated.get("headers") or {},
+                        query=interpolated.get("query") or {},
+                        body=interpolated.get("body"),
+                        timeout_ms=interpolated.get("timeout_ms"),
+                    )
+
+                elif action == "materialize_source":
+                    from data_oop.falkor.repository import FalkorTBoxRepository
+
+                    class_name = interpolated.get("class_name")
+                    if not class_name:
+                        raise ValueError(f"Missing class_name for materialize_source step: {step_id}")
+                    result = materialize_source(
+                        repo=FalkorTBoxRepository(graph),
+                        graph=graph,
+                        class_name=class_name,
+                        prune=interpolated.get("prune", True),
+                        max_rows=interpolated.get("max_rows") or 100000,
+                    )
+                    return _serialize_workflow_value(result)
+
+                elif action == "db_operation":
+                    from data_oop.falkor.repository import FalkorTBoxRepository
+
+                    operation_name = interpolated.get("operation_name")
+                    if not operation_name:
+                        raise ValueError(f"Missing operation_name for db_operation step: {step_id}")
+                    result = execute_db_operation(
+                        name=operation_name,
+                        repo=FalkorTBoxRepository(graph),
+                        graph=graph,
+                        parameters=interpolated.get("parameters") or {},
+                    )
+                    return _serialize_workflow_value(result)
                 else:
                     raise ValueError(f"Unsupported workflow action: {action}")
 
@@ -777,19 +965,20 @@ def run_workflow(
 # ------------------------------------------------------------------
 def _interpolate(val: Any, context: dict[str, Any]) -> Any:
     if isinstance(val, str):
-        # Complete substitution (e.g. "{create_event.uuid}")
-        match = re.match(r"^\{([^}]+)\}$", val)
+        # Complete substitution (e.g. "{create_event.uuid}") preserves native type.
+        match = re.fullmatch(_TEMPLATE_RE, val)
         if match:
             path = match.group(1)
             return _resolve_path(path, context)
-            
-        # Inline string substitution (e.g. "Event: {event_name}")
+
+        # Inline string substitution (e.g. "Event: {event_name}"). Only path-like
+        # templates are replaced, so Cypher maps like ``{uuid: $uuid}`` stay intact.
         def repl(m: re.Match) -> str:
             path = m.group(1)
             res = _resolve_path(path, context)
             return str(res) if res is not None else ""
-        return re.sub(r"\{([^}]+)\}", repl, val)
-        
+        return _TEMPLATE_RE.sub(repl, val)
+
     elif isinstance(val, dict):
         return {k: _interpolate(v, context) for k, v in val.items()}
     elif isinstance(val, list):
@@ -803,9 +992,90 @@ def _resolve_path(path: str, context: dict[str, Any]) -> Any:
     for part in parts:
         if isinstance(curr, dict) and part in curr:
             curr = curr[part]
+        elif isinstance(curr, list) and part.isdigit():
+            idx = int(part)
+            if idx >= len(curr):
+                return None
+            curr = curr[idx]
         else:
             return None
     return curr
+
+
+def _serialize_workflow_value(value: Any) -> Any:
+    """Convert dataclass/list/dict step results into JSON-friendly structures."""
+    if is_dataclass(value):
+        return asdict(value)
+    if isinstance(value, dict):
+        return {k: _serialize_workflow_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_serialize_workflow_value(v) for v in value]
+    return value
+
+
+def _execute_http_request(
+    *,
+    method: str,
+    url: str,
+    headers: dict[str, Any] | None = None,
+    query: dict[str, Any] | None = None,
+    body: Any = None,
+    timeout_ms: int | None = None,
+) -> dict[str, Any]:
+    """Execute a bounded HTTP request for a workflow step and return response data."""
+    if not method or not url:
+        raise ValueError("http_request requires method and url")
+    method_upper = str(method).upper()
+    if method_upper not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}:
+        raise ValueError(f"Unsupported http_request method: {method}")
+    parsed = urlparse(str(url))
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"http_request url must be absolute HTTP(S) URL: {url}")
+
+    request_url = str(url)
+    clean_query = {k: v for k, v in (query or {}).items() if v is not None}
+    if clean_query:
+        sep = "&" if parsed.query else "?"
+        request_url = f"{request_url}{sep}{urlencode(clean_query, doseq=True)}"
+
+    request_headers = {str(k): str(v) for k, v in (headers or {}).items() if v is not None}
+    data: bytes | None = None
+    if body is not None:
+        if isinstance(body, bytes):
+            data = body
+        elif isinstance(body, str):
+            data = body.encode("utf-8")
+        else:
+            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            request_headers.setdefault("Content-Type", "application/json")
+
+    timeout = (timeout_ms / 1000) if timeout_ms else 30
+    request = Request(request_url, data=data, headers=request_headers, method=method_upper)
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            response_body = response.read()
+            status = getattr(response, "status", response.getcode())
+            response_headers = dict(response.headers.items())
+    except HTTPError as exc:
+        response_body = exc.read()
+        status = exc.code
+        response_headers = dict(exc.headers.items())
+    except URLError as exc:
+        raise ValueError(f"http_request failed: {exc}") from exc
+
+    text = response_body.decode("utf-8", errors="replace")
+    parsed_json = None
+    if text:
+        try:
+            parsed_json = json.loads(text)
+        except json.JSONDecodeError:
+            parsed_json = None
+    return {
+        "status": status,
+        "headers": response_headers,
+        "text": text,
+        "json": parsed_json,
+    }
 
 
 def _execute_rollback_item(graph: FalkorGraph, item: dict[str, Any]) -> None:
@@ -950,6 +1220,146 @@ class WorkflowBuilder:
             step_id=step_id,
             action="run_workflow",
             workflow_name=workflow_name,
+            parameters=parameters or {},
+            if_present=if_present,
+            loop_over=loop_over,
+            loop_var=loop_var,
+        ))
+        return self
+
+    def fetch_view(
+        self,
+        step_id: str,
+        view_name: str,
+        parameters: dict[str, Any] | None = None,
+        if_present: str | None = None,
+        loop_over: str | None = None,
+        loop_var: str | None = None,
+    ) -> WorkflowBuilder:
+        """Add a read-only stored ViewDef fetch step."""
+        self.steps.append(WorkflowStepDef(
+            step_id=step_id,
+            action="fetch_view",
+            view_name=view_name,
+            parameters=parameters or {},
+            if_present=if_present,
+            loop_over=loop_over,
+            loop_var=loop_var,
+        ))
+        return self
+
+    def transform(
+        self,
+        step_id: str,
+        parameters: dict[str, Any] | None = None,
+        value: Any | None = None,
+        if_present: str | None = None,
+        loop_over: str | None = None,
+        loop_var: str | None = None,
+    ) -> WorkflowBuilder:
+        """Add a data shaping step that returns interpolated parameters or value."""
+        self.steps.append(WorkflowStepDef(
+            step_id=step_id,
+            action="transform",
+            parameters=parameters or {},
+            value=value,
+            if_present=if_present,
+            loop_over=loop_over,
+            loop_var=loop_var,
+        ))
+        return self
+
+    def abox_query(
+        self,
+        step_id: str,
+        cypher: str,
+        parameters: dict[str, Any] | None = None,
+        limit: int | None = None,
+        timeout_ms: int | None = None,
+        if_present: str | None = None,
+        loop_over: str | None = None,
+        loop_var: str | None = None,
+    ) -> WorkflowBuilder:
+        """Add a read-only ABox Cypher query step."""
+        self.steps.append(WorkflowStepDef(
+            step_id=step_id,
+            action="abox_query",
+            cypher=cypher,
+            parameters=parameters or {},
+            limit=limit,
+            timeout_ms=timeout_ms,
+            if_present=if_present,
+            loop_over=loop_over,
+            loop_var=loop_var,
+        ))
+        return self
+
+    def http_request(
+        self,
+        step_id: str,
+        method: str,
+        url: str,
+        headers: dict[str, Any] | None = None,
+        query: dict[str, Any] | None = None,
+        body: Any | None = None,
+        timeout_ms: int | None = None,
+        if_present: str | None = None,
+        loop_over: str | None = None,
+        loop_var: str | None = None,
+    ) -> WorkflowBuilder:
+        """Add an outbound HTTP request step."""
+        self.steps.append(WorkflowStepDef(
+            step_id=step_id,
+            action="http_request",
+            method=method,
+            url=url,
+            headers=headers or {},
+            query=query or {},
+            body=body,
+            timeout_ms=timeout_ms,
+            if_present=if_present,
+            loop_over=loop_over,
+            loop_var=loop_var,
+        ))
+        return self
+
+    def materialize_source(
+        self,
+        step_id: str,
+        class_name: str,
+        prune: bool = True,
+        max_rows: int | None = None,
+        if_present: str | None = None,
+        loop_over: str | None = None,
+        loop_var: str | None = None,
+    ) -> WorkflowBuilder:
+        """Add a SourceBinding materialization step for a class."""
+        self.steps.append(WorkflowStepDef(
+            step_id=step_id,
+            action="materialize_source",
+            class_name=class_name,
+            prune=prune,
+            max_rows=max_rows,
+            if_present=if_present,
+            loop_over=loop_over,
+            loop_var=loop_var,
+        ))
+        return self
+
+    def db_operation(
+        self,
+        step_id: str,
+        operation_name: str,
+        parameters: dict[str, Any] | None = None,
+        if_present: str | None = None,
+        loop_over: str | None = None,
+        loop_var: str | None = None,
+    ) -> WorkflowBuilder:
+        """Add a code-registered named DB operation step."""
+        self.steps.append(WorkflowStepDef(
+            step_id=step_id,
+            action="db_operation",
+            operation_name=operation_name,
             parameters=parameters or {},
             if_present=if_present,
             loop_over=loop_over,

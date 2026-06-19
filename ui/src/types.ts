@@ -98,9 +98,20 @@ export interface TriggerGraphReport {
   missing_workflows: string[];
 }
 
+export type WorkflowAction =
+  | "create_node"
+  | "create_relationship"
+  | "run_workflow"
+  | "fetch_view"
+  | "transform"
+  | "abox_query"
+  | "http_request"
+  | "materialize_source"
+  | "db_operation";
+
 export interface WorkflowStep {
   step_id: string;
-  action: "create_node" | "create_relationship" | "run_workflow" | "fetch_view";
+  action: WorkflowAction;
   class_name?: string;
   properties?: Record<string, any>;
   uuid?: string;
@@ -115,6 +126,18 @@ export interface WorkflowStep {
   workflow_name?: string;
   view_name?: string;
   parameters?: Record<string, any>;
+  value?: any;
+  cypher?: string;
+  limit?: number;
+  timeout_ms?: number;
+  method?: string;
+  url?: string;
+  headers?: Record<string, any>;
+  query?: Record<string, any>;
+  body?: any;
+  prune?: boolean;
+  max_rows?: number;
+  operation_name?: string;
 }
 
 export interface WorkflowParameter {

@@ -117,7 +117,7 @@ class WorkflowParameter(BaseModel):
 
 class WorkflowStep(BaseModel):
     step_id: str
-    action: str  # "create_node", "create_relationship", "run_workflow"
+    action: str  # create_node | create_relationship | run_workflow | step tools
     class_name: Optional[str] = None
     properties: Optional[Dict[str, Any]] = None
     uuid: Optional[str] = None
@@ -130,7 +130,20 @@ class WorkflowStep(BaseModel):
     loop_over: Optional[str] = None
     loop_var: Optional[str] = None
     workflow_name: Optional[str] = None
+    view_name: Optional[str] = None
     parameters: Optional[Dict[str, Any]] = None
+    value: Optional[Any] = None
+    cypher: Optional[str] = None
+    limit: Optional[int] = None
+    timeout_ms: Optional[int] = None
+    method: Optional[str] = None
+    url: Optional[str] = None
+    headers: Optional[Dict[str, Any]] = None
+    query: Optional[Dict[str, Any]] = None
+    body: Optional[Any] = None
+    prune: bool = True
+    max_rows: Optional[int] = None
+    operation_name: Optional[str] = None
 
 
 class WorkflowCreate(BaseModel):
@@ -581,7 +594,20 @@ def preview_workflow_dsl(data: WorkflowCreate):
                 loop_over=step.loop_over,
                 loop_var=step.loop_var,
                 workflow_name=step.workflow_name,
+                view_name=step.view_name,
                 parameters=step.parameters or {},
+                value=step.value,
+                cypher=step.cypher,
+                limit=step.limit,
+                timeout_ms=step.timeout_ms,
+                method=step.method,
+                url=step.url,
+                headers=step.headers or {},
+                query=step.query or {},
+                body=step.body,
+                prune=step.prune,
+                max_rows=step.max_rows,
+                operation_name=step.operation_name,
             ))
             
         if data.parameters is None:
